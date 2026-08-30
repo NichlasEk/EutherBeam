@@ -4,6 +4,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 internal object WakeOnLan {
@@ -24,20 +25,26 @@ internal object WakeOnLan {
         return ByteArray(6) { 0xff.toByte() } + ByteArray(16 * bytes.size) { bytes[it % bytes.size] }
     }
 
-    suspend fun send(mac: String, directedBroadcast: String? = null) = withContext(Dispatchers.IO) {
+    suspend fun send(
+        mac: String,
+        directedBroadcast: String? = null,
+        rememberedAddress: String? = null,
+    ) = withContext(Dispatchers.IO) {
         val packet = magicPacket(mac)
         val destinations = buildSet {
             add("255.255.255.255")
             directedBroadcast?.let(::add)
+            rememberedAddress?.let(::add)
         }
         DatagramSocket().use { socket ->
             socket.broadcast = true
-            repeat(3) {
+            repeat(8) { round ->
                 destinations.forEach { destination ->
                     listOf(9, 7).forEach { port ->
                         socket.send(DatagramPacket(packet, packet.size, InetAddress.getByName(destination), port))
                     }
                 }
+                if (round < 7) delay(250)
             }
         }
     }

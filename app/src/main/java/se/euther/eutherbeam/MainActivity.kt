@@ -281,9 +281,9 @@ private fun EutherBeamApp() {
         scope.launch wakeLaunch@{
             runCatching {
                 val broadcast = NecNetworkDiscovery.activeSubnet(context)?.broadcastAddress()
-                WakeOnLan.send(normalizedMac, broadcast)
-
                 val remembered = devices.firstOrNull() ?: savedSamsungDevice
+                WakeOnLan.send(normalizedMac, broadcast, remembered?.address)
+
                 val savedIdentity = identity
                 if (remembered != null && savedIdentity != null) {
                     withTimeoutOrNull(2_500) {
@@ -295,24 +295,24 @@ private fun EutherBeamApp() {
                 }
 
                 actionStatus = "Väcksignal skickad. Väntar på Samsung-TV:n…"
-                repeat(15) {
-                    val found = runCatching {
-                        discovery.discover(
-                            timeoutMillis = 2_000,
-                            rememberedAddress = savedSamsungDevice?.address,
-                        )
-                    }.getOrDefault(emptyList())
-                    if (found.isNotEmpty()) {
-                        devices = found
-                        savedSamsungDevice = found.first()
-                        samsungDeviceStore.save(found.first())
+                val address = remembered?.address ?: error("Den sparade TV-adressen saknas")
+                val found = withTimeoutOrNull(35_000) {
+                    while (true) {
+                        discovery.discoverAddress(address)?.let { return@withTimeoutOrNull it }
+                        delay(750)
+                    }
+                    @Suppress("UNREACHABLE_CODE")
+                    null
+                }
+                if (found != null) {
+                        devices = listOf(found)
+                        savedSamsungDevice = found
+                        samsungDeviceStore.save(found)
                         actionStatus = "Samsung-TV:n är vaken och återansluten"
                         working = false
                         return@wakeLaunch
-                    }
-                    delay(1_000)
                 }
-                error("TV:n svarade inte efter 45 sekunder. Kontrollera nätverksstart och MAC-adress.")
+                error("TV:n svarade inte efter 35 sekunder. Kontrollera System > Allmänt > Samsung Instant On på TV:n.")
             }.onFailure { actionStatus = it.message ?: "Kunde inte väcka Samsung-TV:n" }
             working = false
         }
@@ -757,7 +757,7 @@ private fun SamsungWakeCard(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text("NÄTVERKSSTART", color = BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
-            Text(if (online) "TV:n svarar på nätverket" else "TV:n kan väckas från standby", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Text(if (online) "TV:n svarar på nätverket" else "Väck TV:n via nätverket", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             device?.let { Text(it.address, color = BeamMuted, fontSize = 12.sp) }
         }
         if (scanning || working) CircularProgressIndicator(color = BeamOrange, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
@@ -808,6 +808,14 @@ private fun SamsungWakeCard(
         fontSize = 12.sp,
         modifier = Modifier.padding(top = 10.dp),
     )
+    if (!online) {
+        Text(
+            "Kräver Samsung Instant On under System > Allmänt i TV:ns inställningar.",
+            color = BeamOrange,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+    }
 }
 
 @Composable

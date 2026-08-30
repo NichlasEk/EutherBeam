@@ -43,6 +43,12 @@ fallback. This covers Android networks where multicast discovery is filtered eve
 online and reachable. Samsung H-series device identifiers also carry the network MAC suffix; alpha 8
 extracts and persists it automatically so the standby wake button remains usable without ARP access.
 
+Alpha 9 sends a longer Wake-on-LAN burst to the global broadcast, the active subnet broadcast and
+the remembered TV address. Its wake wait loop probes only the saved IP and has a strict 35-second
+deadline, preventing an SSDP timeout from multiplying inside every retry.
+The standby card also points H-series owners to Samsung Instant On when the network interface does
+not remain wake-capable after power-off.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.

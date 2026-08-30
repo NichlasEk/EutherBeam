@@ -8,7 +8,8 @@ class SamsungWakeOnLanLiveTest {
     fun sendsMagicPacketWhenLiveMacIsConfigured() = runBlocking {
         val mac = System.getenv("EUTHERBEAM_SAMSUNG_MAC") ?: return@runBlocking
         val broadcast = System.getenv("EUTHERBEAM_SAMSUNG_BROADCAST")
+        val address = System.getenv("EUTHERBEAM_SAMSUNG_ADDRESS")
 
-        WakeOnLan.send(mac, broadcast)
+        WakeOnLan.send(mac, broadcast, address)
     }
 }

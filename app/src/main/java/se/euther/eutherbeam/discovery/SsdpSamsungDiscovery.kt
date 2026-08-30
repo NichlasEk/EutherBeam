@@ -28,6 +28,10 @@ class SsdpSamsungDiscovery(
 ) {
     private val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
 
+    suspend fun discoverAddress(address: String): SamsungTvDevice? = withContext(Dispatchers.IO) {
+        if (acceptsSamsungControl(address, timeoutMillis = 350)) loadSamsungDevice(address) else null
+    }
+
     suspend fun discover(
         timeoutMillis: Long = 5_000,
         rememberedAddress: String? = null,
@@ -60,8 +64,8 @@ class SsdpSamsungDiscovery(
         }.awaitAll().filterNotNull().distinctBy { it.deviceId.ifBlank { it.address } }
     }
 
-    private fun acceptsSamsungControl(address: String): Boolean = runCatching {
-        Socket().use { socket -> socket.connect(InetSocketAddress(address, 8001), 180) }
+    private fun acceptsSamsungControl(address: String, timeoutMillis: Int = 180): Boolean = runCatching {
+        Socket().use { socket -> socket.connect(InetSocketAddress(address, 8001), timeoutMillis) }
         true
     }.getOrDefault(false)
 
