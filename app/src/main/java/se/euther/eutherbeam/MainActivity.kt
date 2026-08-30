@@ -31,6 +31,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +46,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import se.euther.eutherbeam.discovery.SamsungTvDevice
 import se.euther.eutherbeam.discovery.SsdpSamsungDiscovery
+import se.euther.eutherbeam.androidtv.AndroidTvDevice
+import se.euther.eutherbeam.androidtv.AndroidTvIdentity
+import se.euther.eutherbeam.androidtv.AndroidTvKey
+import se.euther.eutherbeam.androidtv.AndroidTvNetworkDiscovery
+import se.euther.eutherbeam.androidtv.AndroidTvPairingClient
+import se.euther.eutherbeam.androidtv.AndroidTvRemoteClient
 import se.euther.eutherbeam.nec.Ipv4Subnet
 import se.euther.eutherbeam.nec.NecNetworkDiscovery
 import se.euther.eutherbeam.nec.NecRemoteClient
@@ -53,6 +60,7 @@ import se.euther.eutherbeam.protocol.SamsungPairingClient
 import se.euther.eutherbeam.protocol.SamsungRemoteSession
 import se.euther.eutherbeam.protocol.SamsungIdentityStore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -62,7 +70,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class RemoteTab { SAMSUNG, NEC }
+private enum class RemoteTab { SAMSUNG, NEC, ANDROID_TV }
 
 internal val BeamDark = Color(0xFF1D2021)
 internal val BeamPanel = Color(0xFF282828)
@@ -89,17 +97,48 @@ private fun EutherBeamApp() {
     val scope = rememberCoroutineScope()
     val preferences = remember { context.getSharedPreferences("eutherbeam", android.content.Context.MODE_PRIVATE) }
     var selectedTab by remember {
-        mutableStateOf(if (preferences.getString("selected_remote_tab", "samsung") == "nec") RemoteTab.NEC else RemoteTab.SAMSUNG)
+        mutableStateOf(
+            when (preferences.getString("selected_remote_tab", "samsung")) {
+                "nec" -> RemoteTab.NEC
+                "android_tv" -> RemoteTab.ANDROID_TV
+                else -> RemoteTab.SAMSUNG
+            },
+        )
     }
     val necClient = remember { NecRemoteClient() }
     var necAddress by remember { mutableStateOf(preferences.getString("nec_display_ip", "").orEmpty()) }
     var necAddressInput by remember { mutableStateOf(necAddress) }
     var necWorking by remember { mutableStateOf(false) }
     var necStatus by remember { mutableStateOf<String?>(null) }
+    val androidTvIdentity = remember { AndroidTvIdentity() }
+    val androidTvDiscovery = remember { AndroidTvNetworkDiscovery(androidTvIdentity) }
+    val androidTvPairingClient = remember { AndroidTvPairingClient(androidTvIdentity) }
+    val androidTvRemoteClient = remember { AndroidTvRemoteClient(androidTvIdentity) }
+    var androidTvAddress by remember { mutableStateOf(preferences.getString("android_tv_ip", "").orEmpty()) }
+    var androidTvAddressInput by remember { mutableStateOf(androidTvAddress) }
+    var androidTvName by remember { mutableStateOf(preferences.getString("android_tv_name", "Android TV").orEmpty()) }
+    var androidTvPairedHost by remember { mutableStateOf(preferences.getString("android_tv_paired_host", "").orEmpty()) }
+    var androidTvPairingSession by remember { mutableStateOf<AndroidTvPairingClient.Session?>(null) }
+    var androidTvPin by remember { mutableStateOf("") }
+    var androidTvWorking by remember { mutableStateOf(false) }
+    var androidTvStatus by remember { mutableStateOf<String?>(null) }
+    var linkedDisplay by remember {
+        mutableStateOf(
+            if (preferences.getString("android_tv_linked_display", "nec") == "samsung") LinkedDisplay.SAMSUNG
+            else LinkedDisplay.NEC,
+        )
+    }
     val identityStore = remember { SamsungIdentityStore(context) }
     val clientId = remember {
         preferences.getString("client_id", null) ?: UUID.randomUUID().toString().also {
             preferences.edit().putString("client_id", it).apply()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            androidTvPairingSession?.close()
+            androidTvRemoteClient.close()
         }
     }
 
@@ -184,6 +223,119 @@ private fun EutherBeamApp() {
         }
     }
 
+    val discoverAndroidTv: () -> Unit = discover@{
+        val subnet = NecNetworkDiscovery.activeSubnet(context)
+        if (subnet == null) {
+            androidTvStatus = "Kunde inte läsa telefonens aktiva IPv4-nät"
+            return@discover
+        }
+        if (subnet.hostCount !in 1..1024) {
+            androidTvStatus = "$subnet är för stort. Ange puckens IP manuellt."
+            return@discover
+        }
+        androidTvWorking = true
+        androidTvStatus = "Söker efter Android TV Remote Service på $subnet…"
+        scope.launch {
+            runCatching { androidTvDiscovery.discover(subnet) ?: error("Ingen Android TV-puck hittades på $subnet") }
+                .onSuccess { found: AndroidTvDevice ->
+                    androidTvAddress = found.address
+                    androidTvAddressInput = found.address
+                    androidTvName = found.name
+                    preferences.edit()
+                        .putString("android_tv_ip", found.address)
+                        .putString("android_tv_name", found.name)
+                        .apply()
+                    androidTvStatus = "${found.name} hittad: ${found.address}. Tryck Para med PIN."
+                }
+                .onFailure { androidTvStatus = it.message ?: "Android TV-sökningen misslyckades" }
+            androidTvWorking = false
+        }
+    }
+    val startAndroidTvPairing: () -> Unit = startPairing@{
+        val host = Ipv4Subnet.normalizeAddress(androidTvAddressInput)
+        if (host == null) {
+            androidTvStatus = "Ange eller hitta en giltig IPv4-adress först"
+            return@startPairing
+        }
+        androidTvWorking = true
+        androidTvStatus = "Öppnar krypterad parning med $host…"
+        scope.launch {
+            runCatching { androidTvPairingClient.start(host) }
+                .onSuccess { session ->
+                    androidTvPairingSession?.close()
+                    androidTvPairingSession = session
+                    androidTvAddress = host
+                    androidTvAddressInput = host
+                    preferences.edit().putString("android_tv_ip", host).apply()
+                    androidTvStatus = "Skriv in den sexteckniga koden från Android TV:n"
+                }
+                .onFailure { androidTvStatus = it.message ?: "Kunde inte starta Android TV-parningen" }
+            androidTvWorking = false
+        }
+    }
+    val sendAndroidTvKey: (AndroidTvKey) -> Unit = sendAndroidKey@{ key ->
+        val host = Ipv4Subnet.normalizeAddress(androidTvAddress)
+        if (host == null || androidTvPairedHost != host) {
+            androidTvStatus = "Para Android TV-pucken först"
+            return@sendAndroidKey
+        }
+        androidTvWorking = true
+        androidTvStatus = "Skickar ${key.name.lowercase()}…"
+        scope.launch {
+            runCatching { androidTvRemoteClient.sendKey(host, key) }
+                .onSuccess { androidTvStatus = "${key.name.lowercase()} skickad" }
+                .onFailure { androidTvStatus = it.message ?: "Android TV-kommandot misslyckades" }
+            androidTvWorking = false
+        }
+    }
+    val setRoomPower: (Boolean) -> Unit = roomPower@{ on ->
+        val host = Ipv4Subnet.normalizeAddress(androidTvAddress)
+        if (host == null || androidTvPairedHost != host) {
+            androidTvStatus = "Para Android TV-pucken först"
+            return@roomPower
+        }
+        androidTvWorking = true
+        androidTvStatus = if (on) "Startar vardagsrummet…" else "Stänger vardagsrummet…"
+        scope.launch {
+            runCatching {
+                if (on) {
+                    when (linkedDisplay) {
+                        LinkedDisplay.NEC -> {
+                            val displayHost = Ipv4Subnet.normalizeAddress(necAddress)
+                                ?: error("Hitta eller spara NEC-skärmen först")
+                            necClient.sendPower(displayHost, true)
+                        }
+                        LinkedDisplay.SAMSUNG -> {
+                            val device = devices.firstOrNull() ?: error("Samsung-TV:n hittades inte")
+                            val savedIdentity = identity ?: error("Samsung-TV:n är inte parad")
+                            SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey("KEY_POWERON")
+                        }
+                    }
+                    delay(500)
+                    androidTvRemoteClient.sendKey(host, AndroidTvKey.WAKEUP)
+                } else {
+                    androidTvRemoteClient.sendKey(host, AndroidTvKey.SLEEP)
+                    delay(350)
+                    when (linkedDisplay) {
+                        LinkedDisplay.NEC -> {
+                            val displayHost = Ipv4Subnet.normalizeAddress(necAddress)
+                                ?: error("Hitta eller spara NEC-skärmen först")
+                            necClient.sendPower(displayHost, false)
+                        }
+                        LinkedDisplay.SAMSUNG -> {
+                            val device = devices.firstOrNull() ?: error("Samsung-TV:n hittades inte")
+                            val savedIdentity = identity ?: error("Samsung-TV:n är inte parad")
+                            SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey("KEY_POWEROFF")
+                        }
+                    }
+                }
+            }.onSuccess {
+                androidTvStatus = if (on) "Vardagsrummet är startat" else "Allt är avstängt"
+            }.onFailure { androidTvStatus = it.message ?: "Rumsscenen misslyckades" }
+            androidTvWorking = false
+        }
+    }
+
     MaterialTheme {
         Surface(color = BeamDark, modifier = Modifier.fillMaxSize()) {
             Column(
@@ -208,7 +360,8 @@ private fun EutherBeamApp() {
                     },
                 )
 
-                if (selectedTab == RemoteTab.SAMSUNG) {
+                when (selectedTab) {
+                    RemoteTab.SAMSUNG -> {
                     when {
                         scanning -> ScanningCard()
                         devices.isNotEmpty() -> DeviceCard(
@@ -262,18 +415,46 @@ private fun EutherBeamApp() {
                     ) {
                         Text(if (scanning) "Söker…" else "Sök igen", fontWeight = FontWeight.Bold)
                     }
-                } else {
-                    NecRemotePanel(
-                        savedAddress = necAddress,
-                        addressInput = necAddressInput,
-                        onAddressChange = { necAddressInput = it },
-                        status = necStatus,
-                        working = necWorking,
-                        onSaveAddress = saveNecAddress,
-                        onDiscover = discoverNec,
-                        onPower = sendNecPower,
-                        onInput = sendNecInput,
-                    )
+                    }
+                    RemoteTab.NEC -> {
+                        NecRemotePanel(
+                            savedAddress = necAddress,
+                            addressInput = necAddressInput,
+                            onAddressChange = { necAddressInput = it },
+                            status = necStatus,
+                            working = necWorking,
+                            onSaveAddress = saveNecAddress,
+                            onDiscover = discoverNec,
+                            onPower = sendNecPower,
+                            onInput = sendNecInput,
+                        )
+                    }
+                    RemoteTab.ANDROID_TV -> {
+                        AndroidTvPanel(
+                            savedAddress = androidTvAddress,
+                            deviceName = androidTvName,
+                            addressInput = androidTvAddressInput,
+                            onAddressChange = { androidTvAddressInput = it },
+                            paired = androidTvAddress.isNotBlank() && androidTvPairedHost == androidTvAddress,
+                            linkedDisplay = linkedDisplay,
+                            onLinkedDisplayChange = { display ->
+                                linkedDisplay = display
+                                preferences.edit().putString("android_tv_linked_display", display.name.lowercase()).apply()
+                            },
+                            working = androidTvWorking,
+                            status = androidTvStatus,
+                            onDiscover = discoverAndroidTv,
+                            onPair = startAndroidTvPairing,
+                            onForget = {
+                                androidTvRemoteClient.disconnect()
+                                androidTvPairedHost = ""
+                                preferences.edit().remove("android_tv_paired_host").apply()
+                                androidTvStatus = "Den lokala kopplingen är glömd. Du kan para igen."
+                            },
+                            onKey = sendAndroidTvKey,
+                            onRoomPower = setRoomPower,
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -323,6 +504,68 @@ private fun EutherBeamApp() {
             },
         )
     }
+
+    androidTvPairingSession?.let { session ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                if (!androidTvWorking) {
+                    session.close()
+                    androidTvPairingSession = null
+                    androidTvPin = ""
+                }
+            },
+            title = { Text("Para Android TV") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Skriv in den sexteckniga hexkoden som visas på Android TV:n.")
+                    OutlinedTextField(
+                        value = androidTvPin,
+                        onValueChange = { value ->
+                            androidTvPin = value.uppercase().filter { it.isDigit() || it in 'A'..'F' }.take(6)
+                        },
+                        label = { Text("PIN") },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = androidTvPin.length == 6 && !androidTvWorking,
+                    onClick = {
+                        androidTvWorking = true
+                        androidTvStatus = "Verifierar Android TV-koden…"
+                        scope.launch {
+                            runCatching { session.finish(androidTvPin) }
+                                .onSuccess {
+                                    androidTvPairedHost = androidTvAddress
+                                    preferences.edit().putString("android_tv_paired_host", androidTvAddress).apply()
+                                    androidTvPairingSession = null
+                                    androidTvPin = ""
+                                    androidTvStatus = "Android TV-pucken är parad och kopplad till vardagsrummet"
+                                }
+                                .onFailure {
+                                    androidTvPairingSession = null
+                                    androidTvPin = ""
+                                    androidTvStatus = it.message ?: "Android TV-parningen misslyckades"
+                                }
+                            androidTvWorking = false
+                        }
+                    },
+                ) { Text(if (androidTvWorking) "Parar…" else "Bekräfta") }
+            },
+            dismissButton = {
+                Button(
+                    enabled = !androidTvWorking,
+                    onClick = {
+                        session.close()
+                        androidTvPairingSession = null
+                        androidTvPin = ""
+                        androidTvStatus = "Parningen avbröts"
+                    },
+                ) { Text("Avbryt") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -335,7 +578,11 @@ private fun RemoteTabs(selected: RemoteTab, onSelect: (RemoteTab) -> Unit) {
             .padding(6.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        listOf(RemoteTab.SAMSUNG to "Samsung TV", RemoteTab.NEC to "NEC Display").forEach { (tab, label) ->
+        listOf(
+            RemoteTab.SAMSUNG to "Samsung",
+            RemoteTab.NEC to "NEC",
+            RemoteTab.ANDROID_TV to "Android TV",
+        ).forEach { (tab, label) ->
             val active = selected == tab
             Button(
                 onClick = { onSelect(tab) },
@@ -345,7 +592,7 @@ private fun RemoteTabs(selected: RemoteTab, onSelect: (RemoteTab) -> Unit) {
                     containerColor = if (active) BeamOrange else BeamRaised,
                     contentColor = if (active) BeamDark else BeamText,
                 ),
-            ) { Text(label, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+            ) { Text(label, fontWeight = FontWeight.Bold, fontSize = 11.sp) }
         }
     }
 }

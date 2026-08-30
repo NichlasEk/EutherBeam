@@ -23,6 +23,14 @@ Alpha 5 integrates the physically tested NecFjärr external-control implementati
 Display tab. It discovers and verifies compatible NEC displays on TCP 7142, supports manual saved IP,
 power and input control, and restores the last selected Samsung/NEC tab when the app opens again.
 
+Alpha 6 adds a local Android TV room controller using Remote Service v2 rather than ADB. It discovers
+compatible players on TCP 6467, performs six-character PIN pairing over mutual TLS, keeps the private
+RSA identity non-exportable in Android Keystore, and maintains the encrypted TCP 6466 command session
+including protobuf keepalives. The Android TV tab provides navigation, Home, Back, power, media and
+volume controls. A saved room link associates the player with either the Samsung TV or NEC display,
+and room scenes can start or sleep the player together with the selected display. The Android TV tab
+also participates in the existing last-open-tab restoration.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.
@@ -38,6 +46,10 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 ## Protocol notes
 
 Samsung H-series pairing uses HTTP port 8080 for the PIN exchange and Socket.IO on port 8000 for encrypted commands. Device discovery and metadata use SSDP/UPnP, port 7676, and `/ms/1.0/` on port 8001. Some firmware returns HTTP 404 from the optional companion `startService` endpoint while still exposing a working Socket.IO handshake; EutherBeam treats that call as best-effort.
+
+Android TV Remote Service v2 uses mutual TLS and length-delimited protobuf messages: port 6467 for
+PIN pairing and port 6466 for the persistent remote channel. Pairing and control stay on the LAN and
+do not require developer options, USB debugging or ADB on the player.
 
 The Kotlin implementation was checked byte-for-byte against the MIT-licensed `tdudek/samsung-remote-models-2014-and-newer` proof of concept and the Apache-2.0 `sermayoral/ha-samsungtv-encrypted` implementation. See `THIRD_PARTY_NOTICES.md`.
 
