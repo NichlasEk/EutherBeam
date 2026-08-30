@@ -30,11 +30,12 @@ class SamsungLivePairingTest {
         val host = System.getenv("EUTHERBEAM_TV_IP")
         val pin = System.getenv("EUTHERBEAM_TV_PIN")
         val key = System.getenv("EUTHERBEAM_TV_KEY")
-        assumeNotNull(host, pin, key)
+        val duid = System.getenv("EUTHERBEAM_TV_DUID")
+        assumeNotNull(host, pin, key, duid)
         runBlocking {
             val pairingClient = client(checkNotNull(host))
             val identity = pairingClient.confirmPin(checkNotNull(pin))
-            SamsungRemoteSession(checkNotNull(host), identity).sendKey(checkNotNull(key))
+            SamsungRemoteSession(checkNotNull(host), identity, checkNotNull(duid)).sendKey(checkNotNull(key))
         }
     }
 

@@ -2,8 +2,8 @@ package se.euther.eutherbeam.protocol
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
@@ -19,6 +19,7 @@ import kotlin.coroutines.resumeWithException
 class SamsungRemoteSession(
     private val host: String,
     private val identity: SamsungIdentity,
+    private val duid: String,
     private val crypto: SamsungHSeriesCrypto = SamsungHSeriesCrypto(),
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(4, TimeUnit.SECONDS)
@@ -27,13 +28,15 @@ class SamsungRemoteSession(
 ) {
     suspend fun sendKey(key: String) = withContext(Dispatchers.IO) {
         startCompanionService()
-        val socketId = client.newCall(Request.Builder().url("http://$host:8000/socket.io/1/").build())
+        val socketId = client.newCall(Request.Builder().url("http://$host:8000/socket.io/1").build())
             .execute().use { response ->
                 check(response.isSuccessful) { "TV:n svarade HTTP ${response.code}" }
                 response.body?.string()?.substringBefore(':')?.takeIf(String::isNotBlank)
                     ?: error("TV:n gav inget socket-id")
             }
-        withTimeout(10_000) { sendOverSocket(socketId, key) }
+        val socket = withTimeout(4_000) { sendOverSocket(socketId, key) }
+        delay(350)
+        socket.close(1000, "done")
     }
 
     private fun startCompanionService() {
@@ -44,28 +47,31 @@ class SamsungRemoteSession(
         ).execute().close() // Some H-series firmware returns 404 here but still exposes Socket.IO.
     }
 
-    private suspend fun sendOverSocket(socketId: String, key: String) = suspendCancellableCoroutine { continuation ->
+    private suspend fun sendOverSocket(socketId: String, key: String): WebSocket =
+        suspendCancellableCoroutine { continuation ->
         lateinit var socket: WebSocket
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) = Unit
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (text.startsWith("2::")) webSocket.send("2::")
-                when (text) {
-                    "1::" -> webSocket.send("1::/com.samsung.companion")
-                    "1::/com.samsung.companion" -> initializeCompanion(webSocket)
-                }
-                if (text.startsWith(EVENT_PREFIX)) {
-                    val duid = readDuid(text) ?: return
-                    if (!webSocket.send(commandMessage(key, duid))) {
+                if (text == "1::") {
+                    val initialized = webSocket.send("1::/com.samsung.companion") &&
+                        initializeCompanion(webSocket)
+                    if (!initialized || !webSocket.send(commandMessage(key, duid))) {
                         if (continuation.isActive) continuation.resumeWithException(
                             IllegalStateException("TV-kommandot kunde inte köas"),
                         )
                         return
                     }
-                    if (continuation.isActive) continuation.resume(Unit)
-                    webSocket.close(1000, "done")
+                    if (continuation.isActive) continuation.resume(webSocket)
                 }
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (continuation.isActive) continuation.resumeWithException(
+                    IllegalStateException("TV:n stängde anslutningen före kommandot"),
+                )
             }
 
             override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
@@ -79,16 +85,16 @@ class SamsungRemoteSession(
         continuation.invokeOnCancellation { socket.cancel() }
     }
 
-    private fun initializeCompanion(webSocket: WebSocket) {
-        webSocket.send(encryptedEvent("registerPush", JsonObject().apply {
+    private fun initializeCompanion(webSocket: WebSocket): Boolean {
+        val secondTvRegistered = webSocket.send(encryptedEvent("registerPush", JsonObject().apply {
             addProperty("eventType", "EMP")
             addProperty("plugin", "SecondTV")
         }))
-        webSocket.send(encryptedEvent("registerPush", JsonObject().apply {
+        val remoteRegistered = webSocket.send(encryptedEvent("registerPush", JsonObject().apply {
             addProperty("eventType", "EMP")
             addProperty("plugin", "RemoteControl")
         }))
-        webSocket.send(encryptedEvent("callCommon", JsonObject().apply {
+        val duidRequested = webSocket.send(encryptedEvent("callCommon", JsonObject().apply {
             addProperty("method", "POST")
             add("body", JsonObject().apply {
                 addProperty("plugin", "NNavi")
@@ -96,19 +102,7 @@ class SamsungRemoteSession(
                 addProperty("version", "1.000")
             })
         }))
-    }
-
-    private fun readDuid(message: String): String? {
-        val event = JsonParser.parseString(message.removePrefix(EVENT_PREFIX)).asJsonObject
-        if (event.get("name")?.asString != "receiveCommon") return null
-        val encryptedBody = event.getAsJsonArray("args")?.firstOrNull()?.asString ?: return null
-        val encrypted = JsonParser.parseString(encryptedBody).asJsonArray
-            .map { it.asInt.toByte() }
-            .toByteArray()
-        val response = JsonParser.parseString(crypto.decryptCommand(identity.aesKey, encrypted)).asJsonObject
-        return response.takeIf {
-            it.get("plugin")?.asString == "NNavi" && it.get("api")?.asString == "GetDUID"
-        }?.get("result")?.asString?.takeIf(String::isNotBlank)
+        return secondTvRegistered && remoteRegistered && duidRequested
     }
 
     internal fun commandMessage(key: String, duid: String): String {

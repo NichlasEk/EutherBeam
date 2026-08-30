@@ -12,6 +12,10 @@ EutherBeam is a native Kotlin/Jetpack Compose Android remote for televisions on 
 - Includes volume, mute, source, menu, and power controls.
 - Uses no cloud service and does not log PINs or session keys.
 
+Alpha 3 corrects Samsung's white-box command-key derivation and has been physically verified with
+`KEY_POWEROFF` on the target UE55H6400-family television. Upgrading from alpha 1 or alpha 2 requires
+one new PIN pairing because those versions stored an unusable command key.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.
@@ -28,7 +32,7 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 Samsung H-series pairing uses HTTP port 8080 for the PIN exchange and Socket.IO on port 8000 for encrypted commands. Device discovery and metadata use SSDP/UPnP, port 7676, and `/ms/1.0/` on port 8001. Some firmware returns HTTP 404 from the optional companion `startService` endpoint while still exposing a working Socket.IO handshake; EutherBeam treats that call as best-effort.
 
-The clean-room Kotlin implementation was checked byte-for-byte against the MIT-licensed `tdudek/samsung-remote-models-2014-and-newer` proof of concept and the Apache-2.0 `sermayoral/ha-samsungtv-encrypted` implementation. See `THIRD_PARTY_NOTICES.md`.
+The Kotlin implementation was checked byte-for-byte against the MIT-licensed `tdudek/samsung-remote-models-2014-and-newer` proof of concept and the Apache-2.0 `sermayoral/ha-samsungtv-encrypted` implementation. See `THIRD_PARTY_NOTICES.md`.
 
 ## Safety
 

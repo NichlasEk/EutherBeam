@@ -136,7 +136,9 @@ private fun EutherBeamApp() {
                                 working = true
                                 actionStatus = "Skickar $key…"
                                 scope.launch {
-                                    runCatching { SamsungRemoteSession(device.address, savedIdentity).sendKey(key) }
+                                    runCatching {
+                                        SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey(key)
+                                    }
                                         .onSuccess { actionStatus = "$key skickad" }
                                         .onFailure { actionStatus = it.message ?: "Kommandot misslyckades" }
                                     working = false
@@ -251,7 +253,7 @@ private fun RemoteCard(working: Boolean, onKey: (String) -> Unit) = BeamCard {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         RemoteButton("Källa", "KEY_SOURCE", working, Modifier.weight(1f), onKey)
         RemoteButton("Meny", "KEY_MENU", working, Modifier.weight(1f), onKey)
-        RemoteButton("Power", "KEY_POWER", working, Modifier.weight(1f), onKey)
+        RemoteButton("Stäng av", "KEY_POWEROFF", working, Modifier.weight(1f), onKey)
     }
 }
 

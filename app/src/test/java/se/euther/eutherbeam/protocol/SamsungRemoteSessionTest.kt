@@ -8,7 +8,7 @@ class SamsungRemoteSessionTest {
     @Test
     fun `remote key command uses TV duid and string false parameter`() {
         val key = ByteArray(16) { it.toByte() }
-        val session = SamsungRemoteSession("192.0.2.1", SamsungIdentity("42", key))
+        val session = SamsungRemoteSession("192.0.2.1", SamsungIdentity("42", key), "uuid:real-tv-duid")
         val message = session.commandMessage("KEY_VOLUP", "uuid:real-tv-duid")
         val payload = JsonParser.parseString(message.removePrefix("5::/com.samsung.companion:")).asJsonObject
         val encryptedBody = payload.getAsJsonArray("args")[0].asJsonObject.get("body").asString

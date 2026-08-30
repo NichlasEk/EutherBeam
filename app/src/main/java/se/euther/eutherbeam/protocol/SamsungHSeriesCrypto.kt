@@ -66,7 +66,7 @@ class SamsungHSeriesCrypto {
                 secret,
         )
         val skPrimeHash = sha1(skPrime + byteArrayOf(0))
-        val contextKey = aesEcb(skPrimeHash.copyOf(16), TRANSFORM_KEY, encrypt = true)
+        val contextKey = SamsungWhiteBoxTransform.transform(skPrimeHash)
 
         // destinationHash participates in Samsung's transcript even though only the context key is retained.
         check(destinationHash.size == SHA_DIGEST_LENGTH)
@@ -130,6 +130,5 @@ class SamsungHSeriesCrypto {
         private val PRIVATE_KEY_INTEGER = BigInteger("2fd6334713816fae018cdee4656c5033a8d6b00e8eaea07b3624999242e96247112dcd019c4191f4643c3ce1605002b2e506e7f1d1ef8d9b8044e46d37c0d5263216a87cd783aa185490436c4a0cb2c524e15bc1bfeae703bcbc4b74a0540202e8d79cadaae85c6f9c218bc1107d1f5b4b9bd87160e782f4e436eeb17485ab4d", 16)
         private val PRIME_INTEGER = BigInteger("b361eb0ab01c3439f2c16ffda7b05e3e320701ebee3e249123c3586765fd5bf6c1dfa88bb6bb5da3fde74737cd88b6a26c5ca31d81d18e3515533d08df619317063224cf0943a2f29a5fe60c1c31ddf28334ed76a6478a1122fb24c4a94c8711617ddfe90cf02e643cd82d4748d6d4a7ca2f47d88563aa2baf6482e124acd7dd", 16)
         private val WHITE_BOX_KEY = "abbb120c09e7114243d1fa0102163b27".hexToBytes()
-        private val TRANSFORM_KEY = "6c9474469ddf7578f3e5ad8a4c703d99".hexToBytes()
     }
 }

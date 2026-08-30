@@ -34,6 +34,7 @@ class SamsungDeviceParserTest {
 
         assertEquals("UE55H6400", device.modelName)
         assertEquals("[TV]Samsung LED55", device.friendlyName)
+        assertEquals("0d1cef00", device.deviceId)
         assertTrue(device.encrypted)
     }
 }

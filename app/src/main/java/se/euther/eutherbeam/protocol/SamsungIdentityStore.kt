@@ -50,7 +50,7 @@ class SamsungIdentityStore(context: Context) {
     }
 
     private fun storageKey(deviceId: String): String =
-        "identity_${deviceId.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
+        "identity_v2_${deviceId.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
 
     private companion object {
         const val KEY_ALIAS = "EutherBeamSamsungIdentity"
