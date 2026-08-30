@@ -32,6 +32,14 @@ class SamsungHSeriesCryptoTest {
         assertNotEquals(first.message, second.message)
     }
 
+    @Test
+    fun `command encryption round trips with Samsung padding`() {
+        val key = ByteArray(16) { it.toByte() }
+        val command = "{\"plugin\":\"NNavi\",\"api\":\"GetDUID\"}"
+
+        assertEquals(command, crypto.decryptCommand(key, crypto.encryptCommand(key, command)))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `pin must be exactly four digits`() {
         crypto.generateServerHello("654321", "12ab")

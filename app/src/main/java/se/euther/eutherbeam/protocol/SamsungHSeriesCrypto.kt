@@ -88,6 +88,16 @@ class SamsungHSeriesCrypto {
         return aesEcb(bytes + ByteArray(padding) { padding.toByte() }, aesKey, encrypt = true)
     }
 
+    fun decryptCommand(aesKey: ByteArray, encrypted: ByteArray): String {
+        require(encrypted.isNotEmpty() && encrypted.size % 16 == 0) { "Invalid encrypted command" }
+        val padded = aesEcb(encrypted, aesKey, encrypt = false)
+        val padding = padded.last().toInt() and 0xff
+        require(padding in 1..16 && padded.takeLast(padding).all { (it.toInt() and 0xff) == padding }) {
+            "Invalid command padding"
+        }
+        return padded.copyOf(padded.size - padding).toString(Charsets.UTF_8)
+    }
+
     private fun aesCbc(input: ByteArray, key: ByteArray, encrypt: Boolean): ByteArray =
         Cipher.getInstance("AES/CBC/NoPadding").run {
             init(
