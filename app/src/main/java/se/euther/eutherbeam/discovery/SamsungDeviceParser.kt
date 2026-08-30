@@ -23,14 +23,20 @@ internal object SamsungDeviceParser {
         fun string(name: String, fallback: String = ""): String =
             data.get(name)?.takeUnless { it.isJsonNull }?.asString ?: fallback
         val model = string("ModelName", string("Model", "Samsung TV"))
+        val deviceId = string("DeviceID", string("DUID"))
+        val macAddress = listOf("MacAddress", "MAC", "EthernetMac", "WifiMac")
+            .firstNotNullOfOrNull { name -> string(name).takeIf { it.isNotBlank() }?.let(WakeOnLan::normalizeMac) }
+            ?: WakeOnLan.fromSamsungIdentifier(deviceId)
+            ?: WakeOnLan.fromSamsungIdentifier(string("DUID"))
         return SamsungTvDevice(
             address = address,
             friendlyName = string("DeviceName", "Samsung TV"),
             modelName = model,
-            deviceId = string("DeviceID", string("DUID")),
+            deviceId = deviceId,
             serviceUri = string("ServiceURI", "http://$address:8001/ms/1.0/"),
             encrypted = string("Model").startsWith("14_") || model.contains("H6", true),
             networkType = string("NetworkType", "unknown"),
+            macAddress = macAddress,
         )
     }
 }

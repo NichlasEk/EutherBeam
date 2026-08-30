@@ -7,6 +7,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal object WakeOnLan {
+    fun fromSamsungIdentifier(value: String): String? {
+        val suffix = Regex("([0-9A-Fa-f]{12})$").find(value.trim())?.groupValues?.get(1) ?: return null
+        return normalizeMac(suffix)
+    }
+
     fun normalizeMac(value: String): String? {
         val compact = value.trim().replace(Regex("[-:.]"), "").uppercase()
         if (!compact.matches(Regex("[0-9A-F]{12}")) || compact == "000000000000") return null

@@ -37,6 +37,12 @@ packets to global and subnet broadcasts on UDP ports 7 and 9, attempts Samsung I
 path, and automatically rediscovers the TV for up to 45 seconds. This makes an offline TV remain
 visible and actionable instead of disappearing from the app.
 
+Alpha 8 no longer depends on SSDP alone. It first reconnects directly to a remembered Samsung IP
+and, when no device has been saved yet, probes port 8001 across the active local subnet as a bounded
+fallback. This covers Android networks where multicast discovery is filtered even though the TV is
+online and reachable. Samsung H-series device identifiers also carry the network MAC suffix; alpha 8
+extracts and persists it automatically so the standby wake button remains usable without ARP access.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.

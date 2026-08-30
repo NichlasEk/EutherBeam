@@ -22,19 +22,20 @@ class SamsungDeviceParserTest {
         val device = SamsungDeviceParser.parseDeviceInfo(
             "192.168.32.15",
             """{
-                "DUID":"0d1cef00",
+                "DUID":"0d1cef00-00dc-1000-9130-123456789abc",
                 "Model":"14_X14_BT",
                 "ModelName":"UE55H6400",
                 "NetworkType":"wired",
                 "DeviceName":"[TV]Samsung LED55",
-                "DeviceID":"0d1cef00",
+                "DeviceID":"0d1cef00-00dc-1000-9130-123456789abc",
                 "ServiceURI":"http://192.168.32.15:8001/ms/1.0/"
             }""",
         )
 
         assertEquals("UE55H6400", device.modelName)
         assertEquals("[TV]Samsung LED55", device.friendlyName)
-        assertEquals("0d1cef00", device.deviceId)
+        assertEquals("0d1cef00-00dc-1000-9130-123456789abc", device.deviceId)
+        assertEquals("12:34:56:78:9A:BC", device.macAddress)
         assertTrue(device.encrypted)
     }
 }

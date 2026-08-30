@@ -154,7 +154,17 @@ private fun EutherBeamApp() {
         if (selectedTab != RemoteTab.SAMSUNG) return@LaunchedEffect
         scanning = true
         error = null
-        runCatching { discovery.discover() }
+        val fallbackAddresses = NecNetworkDiscovery.activeSubnet(context)
+            ?.hosts()
+            ?.take(1_022)
+            ?.toList()
+            .orEmpty()
+        runCatching {
+            discovery.discover(
+                rememberedAddress = savedSamsungDevice?.address,
+                fallbackAddresses = fallbackAddresses,
+            )
+        }
             .onSuccess { devices = it }
             .onFailure { error = it.message ?: "Nätverkssökningen misslyckades" }
         scanning = false
@@ -165,16 +175,18 @@ private fun EutherBeamApp() {
         if (onlineDevice != null) {
             savedSamsungDevice = onlineDevice
             samsungDeviceStore.save(onlineDevice)
-            if (samsungMac.isBlank()) {
-                SamsungMacResolver.resolve(onlineDevice.address)?.let { resolved ->
-                    samsungMac = resolved
-                    samsungMacInput = resolved
-                    preferences.edit().putString("samsung_tv_mac", resolved).apply()
-                    actionStatus = "Samsung-TV:ns MAC-adress sparades automatiskt"
-                }
-            }
         }
         val device = onlineDevice ?: savedSamsungDevice ?: return@LaunchedEffect
+        if (samsungMac.isBlank()) {
+            val embeddedMac = device.macAddress ?: WakeOnLan.fromSamsungIdentifier(device.deviceId)
+            val resolved = embeddedMac ?: onlineDevice?.let { SamsungMacResolver.resolve(it.address) }
+            resolved?.let {
+                samsungMac = it
+                samsungMacInput = it
+                preferences.edit().putString("samsung_tv_mac", it).apply()
+                actionStatus = "Samsung-TV:ns MAC-adress sparades automatiskt"
+            }
+        }
         identity = identityStore.load(device.deviceId)
     }
 
@@ -284,7 +296,12 @@ private fun EutherBeamApp() {
 
                 actionStatus = "Väcksignal skickad. Väntar på Samsung-TV:n…"
                 repeat(15) {
-                    val found = runCatching { discovery.discover(timeoutMillis = 2_000) }.getOrDefault(emptyList())
+                    val found = runCatching {
+                        discovery.discover(
+                            timeoutMillis = 2_000,
+                            rememberedAddress = savedSamsungDevice?.address,
+                        )
+                    }.getOrDefault(emptyList())
                     if (found.isNotEmpty()) {
                         devices = found
                         savedSamsungDevice = found.first()

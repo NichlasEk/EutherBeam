@@ -15,6 +15,15 @@ class WakeOnLanTest {
     }
 
     @Test
+    fun `extracts mac suffix from Samsung device identifier`() {
+        assertEquals(
+            "12:34:56:78:9A:BC",
+            WakeOnLan.fromSamsungIdentifier("0d1cef00-00dc-1000-9130-123456789abc"),
+        )
+        assertNull(WakeOnLan.fromSamsungIdentifier("0d1cef00"))
+    }
+
+    @Test
     fun `builds standard 102 byte magic packet`() {
         val mac = byteArrayOf(0x12, 0x34, 0x56, 0x78, 0x9a.toByte(), 0xbc.toByte())
         val packet = WakeOnLan.magicPacket("12:34:56:78:9a:bc")

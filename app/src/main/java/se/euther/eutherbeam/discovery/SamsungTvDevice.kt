@@ -8,4 +8,5 @@ data class SamsungTvDevice(
     val serviceUri: String,
     val encrypted: Boolean,
     val networkType: String,
+    val macAddress: String? = null,
 )

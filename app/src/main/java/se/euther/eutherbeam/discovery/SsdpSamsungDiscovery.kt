@@ -9,8 +9,15 @@ import okhttp3.Request
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 class SsdpSamsungDiscovery(
     context: Context,
@@ -21,19 +28,42 @@ class SsdpSamsungDiscovery(
 ) {
     private val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
 
-    suspend fun discover(timeoutMillis: Long = 5_000): List<SamsungTvDevice> = withContext(Dispatchers.IO) {
+    suspend fun discover(
+        timeoutMillis: Long = 5_000,
+        rememberedAddress: String? = null,
+        fallbackAddresses: List<String> = emptyList(),
+    ): List<SamsungTvDevice> = withContext(Dispatchers.IO) {
+        rememberedAddress?.let(::loadSamsungDevice)?.let { return@withContext listOf(it) }
+
         val lock = wifiManager?.createMulticastLock("EutherBeam:ssdp")?.apply {
             setReferenceCounted(false)
             acquire()
         }
         try {
-            discoverLocations(timeoutMillis)
+            val discovered = discoverLocations(timeoutMillis)
                 .mapNotNull(::loadSamsungDevice)
                 .distinctBy { it.deviceId.ifBlank { it.address } }
+            if (discovered.isNotEmpty()) discovered else discoverAddresses(fallbackAddresses)
         } finally {
             if (lock?.isHeld == true) lock.release()
         }
     }
+
+    private suspend fun discoverAddresses(addresses: List<String>): List<SamsungTvDevice> = coroutineScope {
+        val slots = Semaphore(64)
+        addresses.distinct().map { address ->
+            async {
+                slots.withPermit {
+                    if (acceptsSamsungControl(address)) loadSamsungDevice(address) else null
+                }
+            }
+        }.awaitAll().filterNotNull().distinctBy { it.deviceId.ifBlank { it.address } }
+    }
+
+    private fun acceptsSamsungControl(address: String): Boolean = runCatching {
+        Socket().use { socket -> socket.connect(InetSocketAddress(address, 8001), 180) }
+        true
+    }.getOrDefault(false)
 
     private fun discoverLocations(timeoutMillis: Long): Set<String> {
         val request = buildString {
@@ -73,7 +103,11 @@ class SsdpSamsungDiscovery(
     }
 
     private fun loadSamsungDevice(location: String): SamsungTvDevice? {
-        val host = runCatching { java.net.URI(location).host }.getOrNull() ?: return null
+        val host = if (location.contains("://")) {
+            runCatching { java.net.URI(location).host }.getOrNull()
+        } else {
+            location
+        } ?: return null
         val infoUrl = "http://$host:8001/ms/1.0/"
         val request = Request.Builder().url(infoUrl).get().build()
         return runCatching {
