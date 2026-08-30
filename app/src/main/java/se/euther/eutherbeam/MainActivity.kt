@@ -3,18 +3,26 @@ package se.euther.eutherbeam
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -51,11 +59,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val BeamDark = Color(0xFF07151B)
-private val BeamPanel = Color(0xFF10262E)
-private val BeamMint = Color(0xFF65E6D1)
-private val BeamText = Color(0xFFEAFBF7)
-private val BeamMuted = Color(0xFF91ABA7)
+private val BeamDark = Color(0xFF1D2021)
+private val BeamPanel = Color(0xFF282828)
+private val BeamRaised = Color(0xFF32302F)
+private val BeamOrange = Color(0xFFFE8019)
+private val BeamMint = Color(0xFF8EC07C)
+private val BeamYellow = Color(0xFFFABD2F)
+private val BeamText = Color(0xFFEBDBB2)
+private val BeamMuted = Color(0xFFA89984)
 
 @Composable
 private fun EutherBeamApp() {
@@ -96,12 +107,18 @@ private fun EutherBeamApp() {
     MaterialTheme {
         Surface(color = BeamDark, modifier = Modifier.fillMaxSize()) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 28.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Text("EUTHERBEAM", color = BeamMint, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Box(Modifier.size(9.dp).background(BeamOrange, CircleShape))
+                    Text("EUTHERBEAM // LAN CONTROL", color = BeamMint, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                }
                 Text("Din TV. Ett tryck bort.", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 30.sp)
-                Text("Hittar och styr kompatibla skärmar direkt över ditt lokala nätverk.", color = BeamMuted, fontSize = 15.sp)
+                Text("Lokal signal. Krypterad länk. Ingen molntjänst.", color = BeamMuted, fontSize = 15.sp)
 
                 when {
                     scanning -> ScanningCard()
@@ -128,24 +145,23 @@ private fun EutherBeamApp() {
                 }
 
                 identity?.let { savedIdentity ->
-                    RemoteCard(
-                        working = working,
-                        onKey = { key ->
-                            val device = devices.firstOrNull()
-                            if (device != null) {
-                                working = true
-                                actionStatus = "Skickar $key…"
-                                scope.launch {
-                                    runCatching {
-                                        SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey(key)
-                                    }
-                                        .onSuccess { actionStatus = "$key skickad" }
-                                        .onFailure { actionStatus = it.message ?: "Kommandot misslyckades" }
-                                    working = false
+                    val sendKey: (String) -> Unit = { key ->
+                        val device = devices.firstOrNull()
+                        if (device != null) {
+                            working = true
+                            actionStatus = "Skickar $key…"
+                            scope.launch {
+                                runCatching {
+                                    SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey(key)
                                 }
+                                    .onSuccess { actionStatus = "$key skickad" }
+                                    .onFailure { actionStatus = it.message ?: "Kommandot misslyckades" }
+                                working = false
                             }
-                        },
-                    )
+                        }
+                    }
+                    NavigationCard(working = working, onKey = sendKey)
+                    RemoteCard(working = working, onKey = sendKey)
                 }
                 actionStatus?.let { Text(it, color = BeamMuted, fontSize = 13.sp) }
 
@@ -158,7 +174,7 @@ private fun EutherBeamApp() {
                     Text(if (scanning) "Söker…" else "Sök igen", fontWeight = FontWeight.Bold)
                 }
 
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.height(12.dp))
                 Text("Lokal anslutning • Ingen molntjänst", color = BeamMuted, fontSize = 12.sp)
             }
         }
@@ -242,7 +258,7 @@ private fun DeviceCard(
 
 @Composable
 private fun RemoteCard(working: Boolean, onKey: (String) -> Unit) = BeamCard {
-    Text("FJÄRRKONTROLL", color = BeamMint, fontWeight = FontWeight.Black, fontSize = 12.sp)
+    Text("SNABBKONTROLLER", color = BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         RemoteButton("−", "KEY_VOLDOWN", working, Modifier.weight(1f), onKey)
@@ -255,6 +271,80 @@ private fun RemoteCard(working: Boolean, onKey: (String) -> Unit) = BeamCard {
         RemoteButton("Meny", "KEY_MENU", working, Modifier.weight(1f), onKey)
         RemoteButton("Stäng av", "KEY_POWEROFF", working, Modifier.weight(1f), onKey)
     }
+    Spacer(Modifier.height(8.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        RemoteButton("Kanal −", "KEY_CHDOWN", working, Modifier.weight(1f), onKey)
+        RemoteButton("Guide", "KEY_GUIDE", working, Modifier.weight(1f), onKey)
+        RemoteButton("Kanal +", "KEY_CHUP", working, Modifier.weight(1f), onKey)
+    }
+    Spacer(Modifier.height(8.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        RemoteButton("⏪", "KEY_REWIND", working, Modifier.weight(1f), onKey)
+        RemoteButton("▶", "KEY_PLAY", working, Modifier.weight(1f), onKey)
+        RemoteButton("Ⅱ", "KEY_PAUSE", working, Modifier.weight(1f), onKey)
+        RemoteButton("⏩", "KEY_FF", working, Modifier.weight(1f), onKey)
+    }
+}
+
+@Composable
+private fun NavigationCard(working: Boolean, onKey: (String) -> Unit) = BeamCard {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("NAVIGATION", color = BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
+        Text("H-SERIES", color = BeamMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+    }
+    Spacer(Modifier.height(16.dp))
+    Box(
+        modifier = Modifier
+            .size(252.dp)
+            .align(Alignment.CenterHorizontally)
+            .background(BeamRaised, CircleShape)
+            .border(BorderStroke(2.dp, BeamOrange.copy(alpha = 0.72f)), CircleShape),
+    ) {
+        DpadButton("↑", "KEY_UP", working, Modifier.align(Alignment.TopCenter).offset(y = 8.dp), onKey)
+        DpadButton("↓", "KEY_DOWN", working, Modifier.align(Alignment.BottomCenter).offset(y = (-8).dp), onKey)
+        DpadButton("←", "KEY_LEFT", working, Modifier.align(Alignment.CenterStart).offset(x = 8.dp), onKey)
+        DpadButton("→", "KEY_RIGHT", working, Modifier.align(Alignment.CenterEnd).offset(x = (-8).dp), onKey)
+        Button(
+            onClick = { onKey("KEY_ENTER") },
+            enabled = !working,
+            modifier = Modifier.align(Alignment.Center).size(86.dp),
+            shape = CircleShape,
+            border = BorderStroke(2.dp, BeamYellow),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BeamOrange,
+                contentColor = BeamDark,
+                disabledContainerColor = BeamOrange.copy(alpha = 0.42f),
+            ),
+        ) { Text("OK", fontWeight = FontWeight.Black, fontSize = 18.sp) }
+    }
+    Spacer(Modifier.height(16.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        RemoteButton("Tillbaka", "KEY_RETURN", working, Modifier.weight(1f), onKey)
+        RemoteButton("Info", "KEY_INFO", working, Modifier.weight(1f), onKey)
+        RemoteButton("Avsluta", "KEY_EXIT", working, Modifier.weight(1f), onKey)
+    }
+}
+
+@Composable
+private fun DpadButton(
+    label: String,
+    key: String,
+    working: Boolean,
+    modifier: Modifier,
+    onKey: (String) -> Unit,
+) {
+    Button(
+        onClick = { onKey(key) },
+        enabled = !working,
+        modifier = modifier.width(70.dp).height(66.dp),
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, BeamMint.copy(alpha = 0.7f)),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = BeamPanel,
+            contentColor = BeamText,
+            disabledContainerColor = BeamPanel.copy(alpha = 0.5f),
+        ),
+    ) { Text(label, fontSize = 27.sp, fontWeight = FontWeight.Bold) }
 }
 
 @Composable
@@ -269,7 +359,13 @@ private fun RemoteButton(
         onClick = { onKey(key) },
         enabled = !working,
         modifier = modifier,
-        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1A3942), contentColor = BeamText),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, BeamMint.copy(alpha = 0.45f)),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = BeamRaised,
+            contentColor = BeamText,
+            disabledContainerColor = BeamRaised.copy(alpha = 0.5f),
+        ),
     ) { Text(label, fontSize = 12.sp) }
 }
 
@@ -280,9 +376,13 @@ private fun EmptyCard(error: String?) = BeamCard {
 }
 
 @Composable
-private fun BeamCard(content: @Composable () -> Unit) {
+private fun BeamCard(content: @Composable ColumnScope.() -> Unit) {
     Box(
-        modifier = Modifier.fillMaxWidth().background(BeamPanel, RoundedCornerShape(22.dp)).padding(20.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BeamPanel, RoundedCornerShape(24.dp))
+            .border(BorderStroke(1.dp, BeamMint.copy(alpha = 0.2f)), RoundedCornerShape(24.dp))
+            .padding(20.dp),
     ) {
         Column(modifier = Modifier.fillMaxWidth()) { content() }
     }

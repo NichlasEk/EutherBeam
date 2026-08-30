@@ -12,9 +12,12 @@ EutherBeam is a native Kotlin/Jetpack Compose Android remote for televisions on 
 - Includes volume, mute, source, menu, and power controls.
 - Uses no cloud service and does not log PINs or session keys.
 
-Alpha 3 corrects Samsung's white-box command-key derivation and has been physically verified with
+Alpha 3 corrected Samsung's white-box command-key derivation and was physically verified with
 `KEY_POWEROFF` on the target UE55H6400-family television. Upgrading from alpha 1 or alpha 2 requires
 one new PIN pairing because those versions stored an unusable command key.
+
+Alpha 4 adds a rounded directional pad with enter, return, info and exit controls; channel, guide,
+and transport keys; a cyberpunk/Gruvbox visual system; and the serpent-and-TV launcher icon.
 
 ## Build
 
