@@ -15,6 +15,7 @@ class Ipv4SubnetTest {
         assertEquals(510, subnet.hostCount)
         assertEquals("192.168.32.1", subnet.hosts().first())
         assertEquals("192.168.33.254", subnet.hosts().last())
+        assertEquals("192.168.33.255", subnet.broadcastAddress())
     }
 
     @Test

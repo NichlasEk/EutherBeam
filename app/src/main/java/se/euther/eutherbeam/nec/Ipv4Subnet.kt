@@ -13,6 +13,8 @@ internal data class Ipv4Subnet(val network: Long, val prefixLength: Int) {
         for (address in first..last) yield(toAddress(address))
     }
 
+    fun broadcastAddress(): String = toAddress(network + addressCount - 1)
+
     override fun toString(): String = "${toAddress(network)}/$prefixLength"
 
     companion object {

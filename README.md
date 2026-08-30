@@ -31,6 +31,12 @@ volume controls. A saved room link associates the player with either the Samsung
 and room scenes can start or sleep the player together with the selected display. The Android TV tab
 also participates in the existing last-open-tab restoration.
 
+Alpha 7 remembers the last discovered Samsung TV even while its SSDP and IP services are asleep. A
+standby card stores or automatically resolves the TV MAC address, sends repeated Wake-on-LAN magic
+packets to global and subnet broadcasts on UDP ports 7 and 9, attempts Samsung IP power as a fast
+path, and automatically rediscovers the TV for up to 45 seconds. This makes an offline TV remain
+visible and actionable instead of disappearing from the app.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.

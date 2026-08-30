@@ -46,6 +46,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import se.euther.eutherbeam.discovery.SamsungTvDevice
 import se.euther.eutherbeam.discovery.SsdpSamsungDiscovery
+import se.euther.eutherbeam.discovery.SamsungDeviceStore
+import se.euther.eutherbeam.discovery.SamsungMacResolver
+import se.euther.eutherbeam.discovery.WakeOnLan
 import se.euther.eutherbeam.androidtv.AndroidTvDevice
 import se.euther.eutherbeam.androidtv.AndroidTvIdentity
 import se.euther.eutherbeam.androidtv.AndroidTvKey
@@ -61,6 +64,7 @@ import se.euther.eutherbeam.protocol.SamsungRemoteSession
 import se.euther.eutherbeam.protocol.SamsungIdentityStore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -96,6 +100,10 @@ private fun EutherBeamApp() {
     var actionStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val preferences = remember { context.getSharedPreferences("eutherbeam", android.content.Context.MODE_PRIVATE) }
+    val samsungDeviceStore = remember { SamsungDeviceStore(context) }
+    var savedSamsungDevice by remember { mutableStateOf(samsungDeviceStore.load()) }
+    var samsungMac by remember { mutableStateOf(preferences.getString("samsung_tv_mac", "").orEmpty()) }
+    var samsungMacInput by remember { mutableStateOf(samsungMac) }
     var selectedTab by remember {
         mutableStateOf(
             when (preferences.getString("selected_remote_tab", "samsung")) {
@@ -152,8 +160,21 @@ private fun EutherBeamApp() {
         scanning = false
     }
 
-    LaunchedEffect(devices) {
-        val device = devices.firstOrNull() ?: return@LaunchedEffect
+    LaunchedEffect(devices, savedSamsungDevice?.deviceId) {
+        val onlineDevice = devices.firstOrNull()
+        if (onlineDevice != null) {
+            savedSamsungDevice = onlineDevice
+            samsungDeviceStore.save(onlineDevice)
+            if (samsungMac.isBlank()) {
+                SamsungMacResolver.resolve(onlineDevice.address)?.let { resolved ->
+                    samsungMac = resolved
+                    samsungMacInput = resolved
+                    preferences.edit().putString("samsung_tv_mac", resolved).apply()
+                    actionStatus = "Samsung-TV:ns MAC-adress sparades automatiskt"
+                }
+            }
+        }
+        val device = onlineDevice ?: savedSamsungDevice ?: return@LaunchedEffect
         identity = identityStore.load(device.deviceId)
     }
 
@@ -220,6 +241,63 @@ private fun EutherBeamApp() {
                 .onSuccess { necStatus = "NEC-kod $code skickad" }
                 .onFailure { necStatus = it.message ?: "NEC-kommandot misslyckades" }
             necWorking = false
+        }
+    }
+
+    val saveSamsungMac: () -> Unit = saveMac@{
+        val normalized = WakeOnLan.normalizeMac(samsungMacInput)
+        if (normalized == null) {
+            actionStatus = "Ange en giltig MAC-adress, exempelvis 12:34:56:78:9A:BC"
+            return@saveMac
+        }
+        samsungMac = normalized
+        samsungMacInput = normalized
+        preferences.edit().putString("samsung_tv_mac", normalized).apply()
+        actionStatus = "Samsung-TV:ns MAC-adress är sparad"
+    }
+    val wakeSamsung: () -> Unit = wake@{
+        val normalizedMac = WakeOnLan.normalizeMac(samsungMacInput)
+        if (normalizedMac == null) {
+            actionStatus = "Spara Samsung-TV:ns MAC-adress först"
+            return@wake
+        }
+        samsungMac = normalizedMac
+        samsungMacInput = normalizedMac
+        preferences.edit().putString("samsung_tv_mac", normalizedMac).apply()
+        working = true
+        actionStatus = "Skickar Wake-on-LAN till Samsung-TV:n…"
+        scope.launch wakeLaunch@{
+            runCatching {
+                val broadcast = NecNetworkDiscovery.activeSubnet(context)?.broadcastAddress()
+                WakeOnLan.send(normalizedMac, broadcast)
+
+                val remembered = devices.firstOrNull() ?: savedSamsungDevice
+                val savedIdentity = identity
+                if (remembered != null && savedIdentity != null) {
+                    withTimeoutOrNull(2_500) {
+                        runCatching {
+                            SamsungRemoteSession(remembered.address, savedIdentity, remembered.deviceId)
+                                .sendKey("KEY_POWERON")
+                        }
+                    }
+                }
+
+                actionStatus = "Väcksignal skickad. Väntar på Samsung-TV:n…"
+                repeat(15) {
+                    val found = runCatching { discovery.discover(timeoutMillis = 2_000) }.getOrDefault(emptyList())
+                    if (found.isNotEmpty()) {
+                        devices = found
+                        savedSamsungDevice = found.first()
+                        samsungDeviceStore.save(found.first())
+                        actionStatus = "Samsung-TV:n är vaken och återansluten"
+                        working = false
+                        return@wakeLaunch
+                    }
+                    delay(1_000)
+                }
+                error("TV:n svarade inte efter 45 sekunder. Kontrollera nätverksstart och MAC-adress.")
+            }.onFailure { actionStatus = it.message ?: "Kunde inte väcka Samsung-TV:n" }
+            working = false
         }
     }
 
@@ -362,14 +440,16 @@ private fun EutherBeamApp() {
 
                 when (selectedTab) {
                     RemoteTab.SAMSUNG -> {
+                    val onlineSamsung = devices.firstOrNull()
+                    val displayedSamsung = onlineSamsung ?: savedSamsungDevice
                     when {
-                        scanning -> ScanningCard()
-                        devices.isNotEmpty() -> DeviceCard(
-                            device = devices.first(),
+                        displayedSamsung != null -> DeviceCard(
+                            device = displayedSamsung,
+                            online = onlineSamsung != null,
                             paired = identity != null,
                             working = working,
-                            onPair = {
-                                val device = devices.first()
+                            onPair = pair@{
+                                val device = onlineSamsung ?: return@pair
                                 working = true
                                 actionStatus = "Ber TV:n visa en PIN…"
                                 scope.launch {
@@ -383,28 +463,36 @@ private fun EutherBeamApp() {
                                 }
                             },
                         )
+                        scanning -> ScanningCard()
                         else -> EmptyCard(error)
                     }
 
-                    identity?.let { savedIdentity ->
+                    if (onlineSamsung != null) identity?.let { savedIdentity ->
                         val sendKey: (String) -> Unit = { key ->
-                            val device = devices.firstOrNull()
-                            if (device != null) {
-                                working = true
-                                actionStatus = "Skickar $key…"
-                                scope.launch {
-                                    runCatching {
-                                        SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey(key)
-                                    }
-                                        .onSuccess { actionStatus = "$key skickad" }
-                                        .onFailure { actionStatus = it.message ?: "Kommandot misslyckades" }
-                                    working = false
+                            working = true
+                            actionStatus = "Skickar $key…"
+                            scope.launch {
+                                runCatching {
+                                    SamsungRemoteSession(onlineSamsung.address, savedIdentity, onlineSamsung.deviceId).sendKey(key)
                                 }
+                                    .onSuccess { actionStatus = "$key skickad" }
+                                    .onFailure { actionStatus = it.message ?: "Kommandot misslyckades" }
+                                working = false
                             }
                         }
                         NavigationCard(working = working, onKey = sendKey)
                         RemoteCard(working = working, onKey = sendKey)
                     }
+                    SamsungWakeCard(
+                        device = displayedSamsung,
+                        online = onlineSamsung != null,
+                        macInput = samsungMacInput,
+                        onMacChange = { samsungMacInput = it },
+                        scanning = scanning,
+                        working = working,
+                        onSaveMac = saveSamsungMac,
+                        onWake = wakeSamsung,
+                    )
                     actionStatus?.let { Text(it, color = BeamMuted, fontSize = 13.sp) }
 
                     Button(
@@ -611,23 +699,98 @@ private fun ScanningCard() = BeamCard {
 @Composable
 private fun DeviceCard(
     device: SamsungTvDevice,
+    online: Boolean,
     paired: Boolean,
     working: Boolean,
     onPair: () -> Unit,
 ) = BeamCard {
-    Text("TV HITTAD", color = BeamMint, fontWeight = FontWeight.Black, fontSize = 12.sp)
+    Text(if (online) "TV ONLINE" else "TV SPARAD // STANDBY", color = if (online) BeamMint else BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
     Spacer(Modifier.height(10.dp))
     Text(device.friendlyName, color = BeamText, fontWeight = FontWeight.Bold, fontSize = 22.sp)
     Text("${device.modelName}  •  ${device.address}", color = BeamMuted, fontSize = 14.sp)
     Spacer(Modifier.height(18.dp))
     Button(
         onClick = onPair,
-        enabled = !paired && !working,
+        enabled = online && !paired && !working,
         colors = ButtonDefaults.buttonColors(containerColor = BeamMint, contentColor = BeamDark),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(if (paired) "Parad" else "Para TV", fontWeight = FontWeight.Bold)
+        Text(
+            when {
+                !online -> "Standby • väck TV:n nedan"
+                paired -> "Parad"
+                else -> "Para TV"
+            },
+            fontWeight = FontWeight.Bold,
+        )
     }
+}
+
+@Composable
+private fun SamsungWakeCard(
+    device: SamsungTvDevice?,
+    online: Boolean,
+    macInput: String,
+    onMacChange: (String) -> Unit,
+    scanning: Boolean,
+    working: Boolean,
+    onSaveMac: () -> Unit,
+    onWake: () -> Unit,
+) = BeamCard {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text("NÄTVERKSSTART", color = BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
+            Text(if (online) "TV:n svarar på nätverket" else "TV:n kan väckas från standby", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            device?.let { Text(it.address, color = BeamMuted, fontSize = 12.sp) }
+        }
+        if (scanning || working) CircularProgressIndicator(color = BeamOrange, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+    }
+    Spacer(Modifier.height(14.dp))
+    OutlinedTextField(
+        value = macInput,
+        onValueChange = { value ->
+            onMacChange(value.uppercase().filter { it.isDigit() || it in 'A'..'F' || it == ':' || it == '-' || it == '.' }.take(17))
+        },
+        label = { Text("Samsung-TV:ns MAC-adress") },
+        placeholder = { Text("12:34:56:78:9A:BC") },
+        enabled = !working,
+        singleLine = true,
+        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+            focusedTextColor = BeamText,
+            unfocusedTextColor = BeamText,
+            focusedBorderColor = BeamOrange,
+            unfocusedBorderColor = BeamMint.copy(alpha = 0.5f),
+            focusedLabelColor = BeamOrange,
+            unfocusedLabelColor = BeamMuted,
+            cursorColor = BeamOrange,
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(10.dp))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(
+            onClick = onSaveMac,
+            enabled = !working && !scanning,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, BeamMint.copy(alpha = 0.5f)),
+            colors = ButtonDefaults.buttonColors(containerColor = BeamRaised, contentColor = BeamText),
+        ) { Text("Spara MAC", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+        Button(
+            onClick = onWake,
+            enabled = !working && !scanning && WakeOnLan.normalizeMac(macInput) != null,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, BeamYellow),
+            colors = ButtonDefaults.buttonColors(containerColor = BeamOrange, contentColor = BeamDark),
+        ) { Text(if (online) "Skicka väcksignal" else "Väck TV", fontWeight = FontWeight.Black, fontSize = 12.sp) }
+    }
+    Text(
+        "EutherBeam skickar både Wake-on-LAN och Samsungs IP-power, och söker sedan automatiskt tills TV:n svarar.",
+        color = BeamMuted,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(top = 10.dp),
+    )
 }
 
 @Composable
