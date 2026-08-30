@@ -49,6 +49,15 @@ deadline, preventing an SSDP timeout from multiplying inside every retry.
 The standby card also points H-series owners to Samsung Instant On when the network interface does
 not remain wake-capable after power-off.
 
+Alpha 10 replaces the single Android TV address with a persistent multi-player installation model.
+Discovery now returns every Remote Service or Google Cast player on the local subnet, stores stable
+Cast UUIDs, remembers the selected player, pairing state and its Samsung/NEC room association, and
+keeps saved players visible while offline. Samsung H-series wake can use the explicitly associated
+Cast player: EutherBeam launches its receiver over encrypted Cast v2, the active HDMI source wakes
+the television through HDMI-CEC, and Wake-on-LAN remains only a fallback. This route was verified
+live with the `Bakdörr` Chromecast HD at `192.168.32.107`; the app never auto-sends control commands
+to another discovered player.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.

@@ -50,11 +50,13 @@ import se.euther.eutherbeam.discovery.SamsungDeviceStore
 import se.euther.eutherbeam.discovery.SamsungMacResolver
 import se.euther.eutherbeam.discovery.WakeOnLan
 import se.euther.eutherbeam.androidtv.AndroidTvDevice
+import se.euther.eutherbeam.androidtv.AndroidTvDeviceStore
 import se.euther.eutherbeam.androidtv.AndroidTvIdentity
 import se.euther.eutherbeam.androidtv.AndroidTvKey
 import se.euther.eutherbeam.androidtv.AndroidTvNetworkDiscovery
 import se.euther.eutherbeam.androidtv.AndroidTvPairingClient
 import se.euther.eutherbeam.androidtv.AndroidTvRemoteClient
+import se.euther.eutherbeam.androidtv.CastCecWakeClient
 import se.euther.eutherbeam.nec.Ipv4Subnet
 import se.euther.eutherbeam.nec.NecNetworkDiscovery
 import se.euther.eutherbeam.nec.NecRemoteClient
@@ -119,20 +121,27 @@ private fun EutherBeamApp() {
     var necWorking by remember { mutableStateOf(false) }
     var necStatus by remember { mutableStateOf<String?>(null) }
     val androidTvIdentity = remember { AndroidTvIdentity() }
+    val androidTvDeviceStore = remember { AndroidTvDeviceStore(context) }
     val androidTvDiscovery = remember { AndroidTvNetworkDiscovery(androidTvIdentity) }
     val androidTvPairingClient = remember { AndroidTvPairingClient(androidTvIdentity) }
     val androidTvRemoteClient = remember { AndroidTvRemoteClient(androidTvIdentity) }
-    var androidTvAddress by remember { mutableStateOf(preferences.getString("android_tv_ip", "").orEmpty()) }
+    val castCecWakeClient = remember { CastCecWakeClient(androidTvIdentity.sslContext()) }
+    var androidTvDevices by remember { mutableStateOf(androidTvDeviceStore.load()) }
+    var selectedAndroidTvId by remember {
+        mutableStateOf(androidTvDeviceStore.selectedId() ?: androidTvDevices.firstOrNull()?.id)
+    }
+    val initiallySelectedAndroidTv = androidTvDevices.firstOrNull { it.id == selectedAndroidTvId } ?: androidTvDevices.firstOrNull()
+    var androidTvAddress by remember { mutableStateOf(initiallySelectedAndroidTv?.address.orEmpty()) }
     var androidTvAddressInput by remember { mutableStateOf(androidTvAddress) }
-    var androidTvName by remember { mutableStateOf(preferences.getString("android_tv_name", "Android TV").orEmpty()) }
-    var androidTvPairedHost by remember { mutableStateOf(preferences.getString("android_tv_paired_host", "").orEmpty()) }
+    var androidTvName by remember { mutableStateOf(initiallySelectedAndroidTv?.name ?: "Android TV") }
+    var androidTvPairedHost by remember { mutableStateOf(initiallySelectedAndroidTv?.takeIf { it.paired }?.address.orEmpty()) }
     var androidTvPairingSession by remember { mutableStateOf<AndroidTvPairingClient.Session?>(null) }
     var androidTvPin by remember { mutableStateOf("") }
     var androidTvWorking by remember { mutableStateOf(false) }
     var androidTvStatus by remember { mutableStateOf<String?>(null) }
     var linkedDisplay by remember {
         mutableStateOf(
-            if (preferences.getString("android_tv_linked_display", "nec") == "samsung") LinkedDisplay.SAMSUNG
+            if (initiallySelectedAndroidTv?.linkedDisplay == "samsung") LinkedDisplay.SAMSUNG
             else LinkedDisplay.NEC,
         )
     }
@@ -269,20 +278,24 @@ private fun EutherBeamApp() {
     }
     val wakeSamsung: () -> Unit = wake@{
         val normalizedMac = WakeOnLan.normalizeMac(samsungMacInput)
-        if (normalizedMac == null) {
-            actionStatus = "Spara Samsung-TV:ns MAC-adress först"
+        val cecPuck = androidTvDevices.firstOrNull { it.linkedDisplay == "samsung" && it.supportsCast }
+        if (normalizedMac == null && cecPuck == null) {
+            actionStatus = "Koppla en Cast-puck till Samsung eller spara TV:ns MAC-adress först"
             return@wake
         }
-        samsungMac = normalizedMac
-        samsungMacInput = normalizedMac
-        preferences.edit().putString("samsung_tv_mac", normalizedMac).apply()
+        normalizedMac?.let {
+            samsungMac = it
+            samsungMacInput = it
+            preferences.edit().putString("samsung_tv_mac", it).apply()
+        }
         working = true
-        actionStatus = "Skickar Wake-on-LAN till Samsung-TV:n…"
+        actionStatus = if (cecPuck != null) "Väcker ${cecPuck.name} så HDMI-CEC startar Samsung-TV:n…" else "Skickar Wake-on-LAN till Samsung-TV:n…"
         scope.launch wakeLaunch@{
             runCatching {
                 val broadcast = NecNetworkDiscovery.activeSubnet(context)?.broadcastAddress()
                 val remembered = devices.firstOrNull() ?: savedSamsungDevice
-                WakeOnLan.send(normalizedMac, broadcast, remembered?.address)
+                if (cecPuck != null) castCecWakeClient.wake(cecPuck.address, cecPuck.castPort)
+                normalizedMac?.let { WakeOnLan.send(it, broadcast, remembered?.address) }
 
                 val savedIdentity = identity
                 if (remembered != null && savedIdentity != null) {
@@ -312,7 +325,7 @@ private fun EutherBeamApp() {
                         working = false
                         return@wakeLaunch
                 }
-                error("TV:n svarade inte efter 35 sekunder. Kontrollera System > Allmänt > Samsung Instant On på TV:n.")
+                error("TV:n svarade inte efter 35 sekunder. Kontrollera HDMI-CEC och att rätt puck är kopplad till Samsung.")
             }.onFailure { actionStatus = it.message ?: "Kunde inte väcka Samsung-TV:n" }
             working = false
         }
@@ -331,16 +344,20 @@ private fun EutherBeamApp() {
         androidTvWorking = true
         androidTvStatus = "Söker efter Android TV Remote Service på $subnet…"
         scope.launch {
-            runCatching { androidTvDiscovery.discover(subnet) ?: error("Ingen Android TV-puck hittades på $subnet") }
-                .onSuccess { found: AndroidTvDevice ->
+            runCatching { androidTvDiscovery.discover(subnet).ifEmpty { error("Ingen Android TV-puck hittades på $subnet") } }
+                .onSuccess { foundDevices ->
+                    androidTvDevices = androidTvDeviceStore.merge(androidTvDevices, foundDevices)
+                    val found = androidTvDevices.firstOrNull { it.id == selectedAndroidTvId }
+                        ?: foundDevices.firstOrNull { it.name.equals("Bakdörr", ignoreCase = true) }
+                        ?: foundDevices.first()
+                    selectedAndroidTvId = found.id
                     androidTvAddress = found.address
                     androidTvAddressInput = found.address
                     androidTvName = found.name
-                    preferences.edit()
-                        .putString("android_tv_ip", found.address)
-                        .putString("android_tv_name", found.name)
-                        .apply()
-                    androidTvStatus = "${found.name} hittad: ${found.address}. Tryck Para med PIN."
+                    androidTvPairedHost = found.takeIf { it.paired }?.address.orEmpty()
+                    linkedDisplay = if (found.linkedDisplay == "samsung") LinkedDisplay.SAMSUNG else LinkedDisplay.NEC
+                    androidTvDeviceStore.save(androidTvDevices, found.id)
+                    androidTvStatus = "${foundDevices.size} puck${if (foundDevices.size == 1) "" else "ar"} hittade. ${found.name} är vald."
                 }
                 .onFailure { androidTvStatus = it.message ?: "Android TV-sökningen misslyckades" }
             androidTvWorking = false
@@ -361,7 +378,15 @@ private fun EutherBeamApp() {
                     androidTvPairingSession = session
                     androidTvAddress = host
                     androidTvAddressInput = host
-                    preferences.edit().putString("android_tv_ip", host).apply()
+                    val existing = androidTvDevices.firstOrNull { it.address == host }
+                    if (existing == null) {
+                        val manual = AndroidTvDevice("ip:$host", "Android TV", host, supportsRemote = true)
+                        androidTvDevices = androidTvDevices + manual
+                        selectedAndroidTvId = manual.id
+                    } else {
+                        selectedAndroidTvId = existing.id
+                    }
+                    androidTvDeviceStore.save(androidTvDevices, selectedAndroidTvId)
                     androidTvStatus = "Skriv in den sexteckniga koden från Android TV:n"
                 }
                 .onFailure { androidTvStatus = it.message ?: "Kunde inte starta Android TV-parningen" }
@@ -401,9 +426,9 @@ private fun EutherBeamApp() {
                             necClient.sendPower(displayHost, true)
                         }
                         LinkedDisplay.SAMSUNG -> {
-                            val device = devices.firstOrNull() ?: error("Samsung-TV:n hittades inte")
-                            val savedIdentity = identity ?: error("Samsung-TV:n är inte parad")
-                            SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey("KEY_POWERON")
+                            val puck = androidTvDevices.firstOrNull { it.id == selectedAndroidTvId && it.supportsCast }
+                                ?: error("Den valda pucken saknar Cast/CEC-väckning")
+                            castCecWakeClient.wake(puck.address, puck.castPort)
                         }
                     }
                     delay(500)
@@ -503,6 +528,7 @@ private fun EutherBeamApp() {
                     SamsungWakeCard(
                         device = displayedSamsung,
                         online = onlineSamsung != null,
+                        cecPuckName = androidTvDevices.firstOrNull { it.linkedDisplay == "samsung" && it.supportsCast }?.name,
                         macInput = samsungMacInput,
                         onMacChange = { samsungMacInput = it },
                         scanning = scanning,
@@ -536,6 +562,19 @@ private fun EutherBeamApp() {
                     }
                     RemoteTab.ANDROID_TV -> {
                         AndroidTvPanel(
+                            devices = androidTvDevices,
+                            selectedDeviceId = selectedAndroidTvId,
+                            onSelectDevice = { selected ->
+                                selectedAndroidTvId = selected.id
+                                androidTvAddress = selected.address
+                                androidTvAddressInput = selected.address
+                                androidTvName = selected.name
+                                androidTvPairedHost = selected.takeIf { it.paired }?.address.orEmpty()
+                                linkedDisplay = if (selected.linkedDisplay == "samsung") LinkedDisplay.SAMSUNG else LinkedDisplay.NEC
+                                androidTvRemoteClient.disconnect()
+                                androidTvDeviceStore.save(androidTvDevices, selected.id)
+                                androidTvStatus = "${selected.name} vald"
+                            },
                             savedAddress = androidTvAddress,
                             deviceName = androidTvName,
                             addressInput = androidTvAddressInput,
@@ -544,7 +583,16 @@ private fun EutherBeamApp() {
                             linkedDisplay = linkedDisplay,
                             onLinkedDisplayChange = { display ->
                                 linkedDisplay = display
-                                preferences.edit().putString("android_tv_linked_display", display.name.lowercase()).apply()
+                                androidTvDevices = androidTvDevices.map {
+                                    when {
+                                        it.id == selectedAndroidTvId -> it.copy(linkedDisplay = display.name.lowercase())
+                                        it.linkedDisplay == display.name.lowercase() -> it.copy(
+                                            linkedDisplay = if (display == LinkedDisplay.SAMSUNG) "nec" else "samsung",
+                                        )
+                                        else -> it
+                                    }
+                                }
+                                androidTvDeviceStore.save(androidTvDevices, selectedAndroidTvId)
                             },
                             working = androidTvWorking,
                             status = androidTvStatus,
@@ -553,7 +601,10 @@ private fun EutherBeamApp() {
                             onForget = {
                                 androidTvRemoteClient.disconnect()
                                 androidTvPairedHost = ""
-                                preferences.edit().remove("android_tv_paired_host").apply()
+                                androidTvDevices = androidTvDevices.map {
+                                    if (it.id == selectedAndroidTvId) it.copy(paired = false) else it
+                                }
+                                androidTvDeviceStore.save(androidTvDevices, selectedAndroidTvId)
                                 androidTvStatus = "Den lokala kopplingen är glömd. Du kan para igen."
                             },
                             onKey = sendAndroidTvKey,
@@ -643,7 +694,10 @@ private fun EutherBeamApp() {
                             runCatching { session.finish(androidTvPin) }
                                 .onSuccess {
                                     androidTvPairedHost = androidTvAddress
-                                    preferences.edit().putString("android_tv_paired_host", androidTvAddress).apply()
+                                    androidTvDevices = androidTvDevices.map {
+                                        if (it.id == selectedAndroidTvId || it.address == androidTvAddress) it.copy(paired = true) else it
+                                    }
+                                    androidTvDeviceStore.save(androidTvDevices, selectedAndroidTvId)
                                     androidTvPairingSession = null
                                     androidTvPin = ""
                                     androidTvStatus = "Android TV-pucken är parad och kopplad till vardagsrummet"
@@ -747,6 +801,7 @@ private fun DeviceCard(
 private fun SamsungWakeCard(
     device: SamsungTvDevice?,
     online: Boolean,
+    cecPuckName: String?,
     macInput: String,
     onMacChange: (String) -> Unit,
     scanning: Boolean,
@@ -795,7 +850,7 @@ private fun SamsungWakeCard(
         ) { Text("Spara MAC", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
         Button(
             onClick = onWake,
-            enabled = !working && !scanning && WakeOnLan.normalizeMac(macInput) != null,
+            enabled = !working && !scanning && (cecPuckName != null || WakeOnLan.normalizeMac(macInput) != null),
             modifier = Modifier.weight(1f).height(52.dp),
             shape = RoundedCornerShape(20.dp),
             border = BorderStroke(1.dp, BeamYellow),
@@ -803,14 +858,18 @@ private fun SamsungWakeCard(
         ) { Text(if (online) "Skicka väcksignal" else "Väck TV", fontWeight = FontWeight.Black, fontSize = 12.sp) }
     }
     Text(
-        "EutherBeam skickar både Wake-on-LAN och Samsungs IP-power, och söker sedan automatiskt tills TV:n svarar.",
+        if (cecPuckName != null) {
+            "EutherBeam väcker $cecPuckName via Google Cast. Pucken aktiverar HDMI och startar Samsung-TV:n genom CEC."
+        } else {
+            "Koppla en Cast-puck till Samsung under Android TV-fliken. Wake-on-LAN skickas som reservväg."
+        },
         color = BeamMuted,
         fontSize = 12.sp,
         modifier = Modifier.padding(top = 10.dp),
     )
     if (!online) {
         Text(
-            "Kräver Samsung Instant On under System > Allmänt i TV:ns inställningar.",
+            if (cecPuckName != null) "HDMI-CEC måste vara aktivt på TV:n och pucken." else "Den här Samsung-modellen vaknade inte med vanlig Wake-on-LAN i vårt test.",
             color = BeamOrange,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 6.dp),

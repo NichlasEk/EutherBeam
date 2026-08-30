@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -23,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -30,11 +32,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import se.euther.eutherbeam.androidtv.AndroidTvKey
+import se.euther.eutherbeam.androidtv.AndroidTvDevice
 
 internal enum class LinkedDisplay { SAMSUNG, NEC }
 
 @Composable
 internal fun AndroidTvPanel(
+    devices: List<AndroidTvDevice>,
+    selectedDeviceId: String?,
+    onSelectDevice: (AndroidTvDevice) -> Unit,
     savedAddress: String,
     deviceName: String,
     addressInput: String,
@@ -75,6 +81,51 @@ internal fun AndroidTvPanel(
                     .border(BorderStroke(1.dp, if (paired) BeamMint else BeamOrange), CircleShape),
                 contentAlignment = Alignment.Center,
             ) { Text("A", color = if (paired) BeamMint else BeamOrange, fontWeight = FontWeight.Black, fontSize = 18.sp) }
+        }
+    }
+
+    if (devices.isNotEmpty()) {
+        BeamCard {
+            Text("SPARADE PUCKAR", color = BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                devices.forEach { device ->
+                    val selected = device.id == selectedDeviceId
+                    Button(
+                        onClick = { onSelectDevice(device) },
+                        enabled = !working,
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, if (selected) BeamYellow else BeamMint.copy(alpha = 0.35f)),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selected) BeamOrange else BeamRaised,
+                            contentColor = if (selected) BeamDark else BeamText,
+                        ),
+                    ) {
+                        Column(horizontalAlignment = Alignment.Start) {
+                            Text(device.name, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                            Text(device.address, fontSize = 10.sp)
+                            Text(
+                                listOfNotNull(
+                                    "SPARAD",
+                                    "PARAD".takeIf { device.paired },
+                                    "CAST".takeIf { device.supportsCast },
+                                    device.linkedDisplay.uppercase(),
+                                ).joinToString(" • "),
+                                fontSize = 9.sp,
+                            )
+                        }
+                    }
+                }
+            }
+            Text(
+                "Valet och TV-kopplingen ligger kvar även när pucken är avstängd eller appen startas om.",
+                color = BeamMuted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 9.dp),
+            )
         }
     }
 
