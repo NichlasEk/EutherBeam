@@ -45,6 +45,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import se.euther.eutherbeam.discovery.SamsungTvDevice
 import se.euther.eutherbeam.discovery.SsdpSamsungDiscovery
+import se.euther.eutherbeam.nec.Ipv4Subnet
+import se.euther.eutherbeam.nec.NecNetworkDiscovery
+import se.euther.eutherbeam.nec.NecRemoteClient
 import se.euther.eutherbeam.protocol.SamsungIdentity
 import se.euther.eutherbeam.protocol.SamsungPairingClient
 import se.euther.eutherbeam.protocol.SamsungRemoteSession
@@ -59,14 +62,16 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val BeamDark = Color(0xFF1D2021)
-private val BeamPanel = Color(0xFF282828)
-private val BeamRaised = Color(0xFF32302F)
-private val BeamOrange = Color(0xFFFE8019)
-private val BeamMint = Color(0xFF8EC07C)
-private val BeamYellow = Color(0xFFFABD2F)
-private val BeamText = Color(0xFFEBDBB2)
-private val BeamMuted = Color(0xFFA89984)
+private enum class RemoteTab { SAMSUNG, NEC }
+
+internal val BeamDark = Color(0xFF1D2021)
+internal val BeamPanel = Color(0xFF282828)
+internal val BeamRaised = Color(0xFF32302F)
+internal val BeamOrange = Color(0xFFFE8019)
+internal val BeamMint = Color(0xFF8EC07C)
+internal val BeamYellow = Color(0xFFFABD2F)
+internal val BeamText = Color(0xFFEBDBB2)
+internal val BeamMuted = Color(0xFFA89984)
 
 @Composable
 private fun EutherBeamApp() {
@@ -83,6 +88,14 @@ private fun EutherBeamApp() {
     var actionStatus by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val preferences = remember { context.getSharedPreferences("eutherbeam", android.content.Context.MODE_PRIVATE) }
+    var selectedTab by remember {
+        mutableStateOf(if (preferences.getString("selected_remote_tab", "samsung") == "nec") RemoteTab.NEC else RemoteTab.SAMSUNG)
+    }
+    val necClient = remember { NecRemoteClient() }
+    var necAddress by remember { mutableStateOf(preferences.getString("nec_display_ip", "").orEmpty()) }
+    var necAddressInput by remember { mutableStateOf(necAddress) }
+    var necWorking by remember { mutableStateOf(false) }
+    var necStatus by remember { mutableStateOf<String?>(null) }
     val identityStore = remember { SamsungIdentityStore(context) }
     val clientId = remember {
         preferences.getString("client_id", null) ?: UUID.randomUUID().toString().also {
@@ -90,7 +103,8 @@ private fun EutherBeamApp() {
         }
     }
 
-    LaunchedEffect(scanGeneration) {
+    LaunchedEffect(scanGeneration, selectedTab) {
+        if (selectedTab != RemoteTab.SAMSUNG) return@LaunchedEffect
         scanning = true
         error = null
         runCatching { discovery.discover() }
@@ -102,6 +116,72 @@ private fun EutherBeamApp() {
     LaunchedEffect(devices) {
         val device = devices.firstOrNull() ?: return@LaunchedEffect
         identity = identityStore.load(device.deviceId)
+    }
+
+    val saveNecAddress: () -> Unit = {
+        val normalized = Ipv4Subnet.normalizeAddress(necAddressInput)
+        if (normalized == null) {
+            necStatus = "Ange en giltig IPv4-adress"
+        } else {
+            necAddress = normalized
+            necAddressInput = normalized
+            preferences.edit().putString("nec_display_ip", normalized).apply()
+            necStatus = "NEC-adressen är sparad"
+        }
+    }
+    val discoverNec: () -> Unit = discover@{
+        val subnet = NecNetworkDiscovery.activeSubnet(context)
+        if (subnet == null) {
+            necStatus = "Kunde inte läsa telefonens aktiva IPv4-nät"
+            return@discover
+        }
+        if (subnet.hostCount !in 1..1024) {
+            necStatus = "$subnet är för stort. Ange skärmens IP manuellt."
+            return@discover
+        }
+        necWorking = true
+        necStatus = "Söker efter verifierad NEC-skärm på $subnet…"
+        scope.launch {
+            runCatching { necClient.discover(subnet) ?: error("Ingen NEC-skärm hittades på $subnet") }
+                .onSuccess { found ->
+                    necAddress = found
+                    necAddressInput = found
+                    preferences.edit().putString("nec_display_ip", found).apply()
+                    necStatus = "NEC-skärm hittad och sparad: $found"
+                }
+                .onFailure { necStatus = it.message ?: "NEC-sökningen misslyckades" }
+            necWorking = false
+        }
+    }
+    val sendNecPower: (Boolean) -> Unit = sendPower@{ on ->
+        val host = Ipv4Subnet.normalizeAddress(necAddress)
+        if (host == null) {
+            necStatus = "Spara eller hitta NEC-skärmens IP först"
+            return@sendPower
+        }
+        necWorking = true
+        necStatus = if (on) "Slår på NEC-skärmen…" else "Stänger av NEC-skärmen…"
+        scope.launch {
+            runCatching { necClient.sendPower(host, on) }
+                .onSuccess { necStatus = if (on) "NEC: ström på skickad" else "NEC: ström av skickad" }
+                .onFailure { necStatus = it.message ?: "NEC-kommandot misslyckades" }
+            necWorking = false
+        }
+    }
+    val sendNecInput: (String) -> Unit = sendInput@{ code ->
+        val host = Ipv4Subnet.normalizeAddress(necAddress)
+        if (host == null) {
+            necStatus = "Spara eller hitta NEC-skärmens IP först"
+            return@sendInput
+        }
+        necWorking = true
+        necStatus = "Skickar NEC-kod $code…"
+        scope.launch {
+            runCatching { necClient.sendInput(host, code) }
+                .onSuccess { necStatus = "NEC-kod $code skickad" }
+                .onFailure { necStatus = it.message ?: "NEC-kommandot misslyckades" }
+            necWorking = false
+        }
     }
 
     MaterialTheme {
@@ -117,61 +197,83 @@ private fun EutherBeamApp() {
                     Box(Modifier.size(9.dp).background(BeamOrange, CircleShape))
                     Text("EUTHERBEAM // LAN CONTROL", color = BeamMint, fontWeight = FontWeight.Black, fontSize = 13.sp)
                 }
-                Text("Din TV. Ett tryck bort.", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 30.sp)
+                Text("Dina skärmar. Ett tryck bort.", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 30.sp)
                 Text("Lokal signal. Krypterad länk. Ingen molntjänst.", color = BeamMuted, fontSize = 15.sp)
 
-                when {
-                    scanning -> ScanningCard()
-                    devices.isNotEmpty() -> DeviceCard(
-                        device = devices.first(),
-                        paired = identity != null,
-                        working = working,
-                        onPair = {
-                            val device = devices.first()
-                            working = true
-                            actionStatus = "Ber TV:n visa en PIN…"
-                            scope.launch {
-                                runCatching {
-                                    SamsungPairingClient(device.address, "12345", clientId, "654321").requestPin()
-                                }.onSuccess {
-                                    awaitingPinFor = device
-                                    actionStatus = "Skriv in PIN-koden från TV:n"
-                                }.onFailure { actionStatus = it.message ?: "Kunde inte starta parning" }
-                                working = false
-                            }
-                        },
-                    )
-                    else -> EmptyCard(error)
-                }
+                RemoteTabs(
+                    selected = selectedTab,
+                    onSelect = { tab ->
+                        selectedTab = tab
+                        preferences.edit().putString("selected_remote_tab", tab.name.lowercase()).apply()
+                    },
+                )
 
-                identity?.let { savedIdentity ->
-                    val sendKey: (String) -> Unit = { key ->
-                        val device = devices.firstOrNull()
-                        if (device != null) {
-                            working = true
-                            actionStatus = "Skickar $key…"
-                            scope.launch {
-                                runCatching {
-                                    SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey(key)
+                if (selectedTab == RemoteTab.SAMSUNG) {
+                    when {
+                        scanning -> ScanningCard()
+                        devices.isNotEmpty() -> DeviceCard(
+                            device = devices.first(),
+                            paired = identity != null,
+                            working = working,
+                            onPair = {
+                                val device = devices.first()
+                                working = true
+                                actionStatus = "Ber TV:n visa en PIN…"
+                                scope.launch {
+                                    runCatching {
+                                        SamsungPairingClient(device.address, "12345", clientId, "654321").requestPin()
+                                    }.onSuccess {
+                                        awaitingPinFor = device
+                                        actionStatus = "Skriv in PIN-koden från TV:n"
+                                    }.onFailure { actionStatus = it.message ?: "Kunde inte starta parning" }
+                                    working = false
                                 }
-                                    .onSuccess { actionStatus = "$key skickad" }
-                                    .onFailure { actionStatus = it.message ?: "Kommandot misslyckades" }
-                                working = false
+                            },
+                        )
+                        else -> EmptyCard(error)
+                    }
+
+                    identity?.let { savedIdentity ->
+                        val sendKey: (String) -> Unit = { key ->
+                            val device = devices.firstOrNull()
+                            if (device != null) {
+                                working = true
+                                actionStatus = "Skickar $key…"
+                                scope.launch {
+                                    runCatching {
+                                        SamsungRemoteSession(device.address, savedIdentity, device.deviceId).sendKey(key)
+                                    }
+                                        .onSuccess { actionStatus = "$key skickad" }
+                                        .onFailure { actionStatus = it.message ?: "Kommandot misslyckades" }
+                                    working = false
+                                }
                             }
                         }
+                        NavigationCard(working = working, onKey = sendKey)
+                        RemoteCard(working = working, onKey = sendKey)
                     }
-                    NavigationCard(working = working, onKey = sendKey)
-                    RemoteCard(working = working, onKey = sendKey)
-                }
-                actionStatus?.let { Text(it, color = BeamMuted, fontSize = 13.sp) }
+                    actionStatus?.let { Text(it, color = BeamMuted, fontSize = 13.sp) }
 
-                Button(
-                    onClick = { scanGeneration++ },
-                    enabled = !scanning,
-                    colors = ButtonDefaults.buttonColors(containerColor = BeamMint, contentColor = BeamDark),
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                ) {
-                    Text(if (scanning) "Söker…" else "Sök igen", fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = { scanGeneration++ },
+                        enabled = !scanning,
+                        colors = ButtonDefaults.buttonColors(containerColor = BeamMint, contentColor = BeamDark),
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                    ) {
+                        Text(if (scanning) "Söker…" else "Sök igen", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    NecRemotePanel(
+                        savedAddress = necAddress,
+                        addressInput = necAddressInput,
+                        onAddressChange = { necAddressInput = it },
+                        status = necStatus,
+                        working = necWorking,
+                        onSaveAddress = saveNecAddress,
+                        onDiscover = discoverNec,
+                        onPower = sendNecPower,
+                        onInput = sendNecInput,
+                    )
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -220,6 +322,31 @@ private fun EutherBeamApp() {
                 Button(enabled = !working, onClick = { awaitingPinFor = null }) { Text("Avbryt") }
             },
         )
+    }
+}
+
+@Composable
+private fun RemoteTabs(selected: RemoteTab, onSelect: (RemoteTab) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BeamPanel, RoundedCornerShape(24.dp))
+            .border(BorderStroke(1.dp, BeamMint.copy(alpha = 0.2f)), RoundedCornerShape(24.dp))
+            .padding(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        listOf(RemoteTab.SAMSUNG to "Samsung TV", RemoteTab.NEC to "NEC Display").forEach { (tab, label) ->
+            val active = selected == tab
+            Button(
+                onClick = { onSelect(tab) },
+                modifier = Modifier.weight(1f).height(48.dp),
+                shape = RoundedCornerShape(19.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (active) BeamOrange else BeamRaised,
+                    contentColor = if (active) BeamDark else BeamText,
+                ),
+            ) { Text(label, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+        }
     }
 }
 
@@ -376,7 +503,7 @@ private fun EmptyCard(error: String?) = BeamCard {
 }
 
 @Composable
-private fun BeamCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun BeamCard(content: @Composable ColumnScope.() -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()

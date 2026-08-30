@@ -19,6 +19,10 @@ one new PIN pairing because those versions stored an unusable command key.
 Alpha 4 adds a rounded directional pad with enter, return, info and exit controls; channel, guide,
 and transport keys; a cyberpunk/Gruvbox visual system; and the serpent-and-TV launcher icon.
 
+Alpha 5 integrates the physically tested NecFjärr external-control implementation as a separate NEC
+Display tab. It discovers and verifies compatible NEC displays on TCP 7142, supports manual saved IP,
+power and input control, and restores the last selected Samsung/NEC tab when the app opens again.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.
