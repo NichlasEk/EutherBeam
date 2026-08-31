@@ -58,6 +58,12 @@ the television through HDMI-CEC, and Wake-on-LAN remains only a fallback. This r
 live with the `Bakdörr` Chromecast HD at `192.168.32.107`; the app never auto-sends control commands
 to another discovered player.
 
+Alpha 11 closes the deep-standby gap for Android TV players. `STARTA RUM` now powers the linked NEC
+display and wakes a Cast-capable player over Cast v2 before Android Remote Service is expected to be
+online. The Android TV panel also exposes an explicit `VÄCK PUCK VIA CAST` action, and the ordinary
+Power command falls back to Cast when the paired remote channel is unavailable. Sleeping and room
+shutdown still use the authenticated Android TV remote channel.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.

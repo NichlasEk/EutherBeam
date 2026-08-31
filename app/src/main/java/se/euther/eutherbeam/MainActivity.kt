@@ -402,15 +402,61 @@ private fun EutherBeamApp() {
         androidTvWorking = true
         androidTvStatus = "Skickar ${key.name.lowercase()}…"
         scope.launch {
-            runCatching { androidTvRemoteClient.sendKey(host, key) }
-                .onSuccess { androidTvStatus = "${key.name.lowercase()} skickad" }
+            var usedCastFallback = false
+            val selectedPuck = androidTvDevices.firstOrNull { it.id == selectedAndroidTvId }
+            runCatching {
+                if (
+                    key in setOf(AndroidTvKey.POWER, AndroidTvKey.WAKEUP) &&
+                    selectedPuck != null &&
+                    !androidTvRemoteClient.isAvailable(host)
+                ) {
+                    castCecWakeClient.wake(selectedPuck.address, selectedPuck.castPort)
+                    usedCastFallback = true
+                } else {
+                    androidTvRemoteClient.sendKey(host, key)
+                }
+            }
+                .recoverCatching { remoteError ->
+                    if (key !in setOf(AndroidTvKey.POWER, AndroidTvKey.WAKEUP) || selectedPuck == null) {
+                        throw remoteError
+                    }
+                    castCecWakeClient.wake(selectedPuck.address, selectedPuck.castPort)
+                    usedCastFallback = true
+                }
+                .onSuccess {
+                    androidTvStatus = if (usedCastFallback) {
+                        "${androidTvName} väcks via Cast"
+                    } else {
+                        "${key.name.lowercase()} skickad"
+                    }
+                }
                 .onFailure { androidTvStatus = it.message ?: "Android TV-kommandot misslyckades" }
+            androidTvWorking = false
+        }
+    }
+    val wakeAndroidTvPlayer: () -> Unit = wakePlayer@{
+        val puck = androidTvDevices.firstOrNull { it.id == selectedAndroidTvId }
+        if (puck == null) {
+            androidTvStatus = "Välj en sparad Android TV-puck först"
+            return@wakePlayer
+        }
+        androidTvWorking = true
+        androidTvStatus = "Väcker ${puck.name} via Cast…"
+        scope.launch {
+            runCatching { castCecWakeClient.wake(puck.address, puck.castPort) }
+                .onSuccess { androidTvStatus = "${puck.name} är väckt. Android Remote återansluter när den är redo." }
+                .onFailure { androidTvStatus = it.message ?: "Kunde inte väcka ${puck.name}" }
             androidTvWorking = false
         }
     }
     val setRoomPower: (Boolean) -> Unit = roomPower@{ on ->
         val host = Ipv4Subnet.normalizeAddress(androidTvAddress)
-        if (host == null || androidTvPairedHost != host) {
+        val selectedPuck = androidTvDevices.firstOrNull { it.id == selectedAndroidTvId }
+        if (host == null || selectedPuck == null) {
+            androidTvStatus = "Välj en sparad Android TV-puck först"
+            return@roomPower
+        }
+        if (androidTvPairedHost != host && !on) {
             androidTvStatus = "Para Android TV-pucken först"
             return@roomPower
         }
@@ -419,20 +465,29 @@ private fun EutherBeamApp() {
         scope.launch {
             runCatching {
                 if (on) {
+                    var castWakeSucceeded = false
                     when (linkedDisplay) {
                         LinkedDisplay.NEC -> {
                             val displayHost = Ipv4Subnet.normalizeAddress(necAddress)
                                 ?: error("Hitta eller spara NEC-skärmen först")
                             necClient.sendPower(displayHost, true)
+                            castWakeSucceeded = runCatching {
+                                castCecWakeClient.wake(selectedPuck.address, selectedPuck.castPort)
+                            }.isSuccess
                         }
                         LinkedDisplay.SAMSUNG -> {
-                            val puck = androidTvDevices.firstOrNull { it.id == selectedAndroidTvId && it.supportsCast }
-                                ?: error("Den valda pucken saknar Cast/CEC-väckning")
-                            castCecWakeClient.wake(puck.address, puck.castPort)
+                            if (!selectedPuck.supportsCast) error("Den valda pucken saknar Cast/CEC-väckning")
+                            castCecWakeClient.wake(selectedPuck.address, selectedPuck.castPort)
+                            castWakeSucceeded = true
                         }
                     }
-                    delay(500)
-                    androidTvRemoteClient.sendKey(host, AndroidTvKey.WAKEUP)
+                    delay(750)
+                    if (androidTvPairedHost == host) {
+                        val remoteWake = runCatching { androidTvRemoteClient.sendKey(host, AndroidTvKey.WAKEUP) }
+                        if (!castWakeSucceeded) remoteWake.getOrThrow()
+                    } else if (!castWakeSucceeded) {
+                        error("Pucken svarade varken på Cast eller en parad Android Remote-kanal")
+                    }
                 } else {
                     androidTvRemoteClient.sendKey(host, AndroidTvKey.SLEEP)
                     delay(350)
@@ -608,6 +663,8 @@ private fun EutherBeamApp() {
                                 androidTvStatus = "Den lokala kopplingen är glömd. Du kan para igen."
                             },
                             onKey = sendAndroidTvKey,
+                            canCastWake = androidTvDevices.any { it.id == selectedAndroidTvId },
+                            onWakePlayer = wakeAndroidTvPlayer,
                             onRoomPower = setRoomPower,
                         )
                     }

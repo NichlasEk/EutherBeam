@@ -3,6 +3,7 @@ package se.euther.eutherbeam.androidtv
 import java.io.Closeable
 import java.net.InetSocketAddress
 import java.net.SocketException
+import java.net.Socket
 import javax.net.ssl.SSLSocket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,12 @@ internal class AndroidTvRemoteClient(private val identity: AndroidTvIdentity) : 
 
     suspend fun connect(host: String) = connectionMutex.withLock {
         withContext(Dispatchers.IO) { ensureConnected(host) }
+    }
+
+    suspend fun isAvailable(host: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            Socket().use { it.connect(InetSocketAddress(host, AndroidTvProtocol.REMOTE_PORT), PROBE_TIMEOUT_MS) }
+        }.isSuccess
     }
 
     suspend fun sendKey(host: String, key: AndroidTvKey) = connectionMutex.withLock {
@@ -119,6 +126,7 @@ internal class AndroidTvRemoteClient(private val identity: AndroidTvIdentity) : 
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 4_000
+        const val PROBE_TIMEOUT_MS = 400
         const val READ_TIMEOUT_MS = 12_000
         const val MAX_HANDSHAKE_MESSAGES = 12
     }

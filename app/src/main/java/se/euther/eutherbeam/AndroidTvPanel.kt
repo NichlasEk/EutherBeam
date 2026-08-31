@@ -54,6 +54,8 @@ internal fun AndroidTvPanel(
     onPair: () -> Unit,
     onForget: () -> Unit,
     onKey: (AndroidTvKey) -> Unit,
+    canCastWake: Boolean,
+    onWakePlayer: () -> Unit,
     onRoomPower: (Boolean) -> Unit,
 ) {
     BeamCard {
@@ -232,6 +234,15 @@ internal fun AndroidTvPanel(
         BeamCard {
             Text("RUMSSCENER", color = BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
             Spacer(Modifier.height(12.dp))
+            if (canCastWake) {
+                AndroidTvButton("VÄCK PUCK VIA CAST", working, Modifier.fillMaxWidth(), onWakePlayer, primary = true)
+                Text(
+                    "Fungerar även när Android Remote är nedkopplad i standby.",
+                    color = BeamMuted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 7.dp, bottom = 10.dp),
+                )
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AndroidTvButton("STARTA RUM", working, Modifier.weight(1f), { onRoomPower(true) }, primary = true)
                 AndroidTvButton("STÄNG ALLT", working, Modifier.weight(1f), { onRoomPower(false) }, danger = true)
