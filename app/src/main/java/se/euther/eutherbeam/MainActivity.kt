@@ -100,6 +100,7 @@ private fun EutherBeamApp() {
     var working by remember { mutableStateOf(false) }
     var identity by remember { mutableStateOf<SamsungIdentity?>(null) }
     var actionStatus by remember { mutableStateOf<String?>(null) }
+    var samsungWakeGeneration by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
     val preferences = remember { context.getSharedPreferences("eutherbeam", android.content.Context.MODE_PRIVATE) }
     val samsungDeviceStore = remember { SamsungDeviceStore(context) }
@@ -278,9 +279,9 @@ private fun EutherBeamApp() {
     }
     val wakeSamsung: () -> Unit = wake@{
         val normalizedMac = WakeOnLan.normalizeMac(samsungMacInput)
-        val cecPuck = androidTvDevices.firstOrNull { it.linkedDisplay == "samsung" && it.supportsCast }
+        val cecPuck = androidTvDevices.firstOrNull { it.linkedDisplay == "samsung" }
         if (normalizedMac == null && cecPuck == null) {
-            actionStatus = "Koppla en Cast-puck till Samsung eller spara TV:ns MAC-adress först"
+            actionStatus = "Koppla en Android TV-puck till Samsung eller spara TV:ns MAC-adress först"
             return@wake
         }
         normalizedMac?.let {
@@ -288,46 +289,51 @@ private fun EutherBeamApp() {
             samsungMacInput = it
             preferences.edit().putString("samsung_tv_mac", it).apply()
         }
+        samsungWakeGeneration += 1
+        val wakeGeneration = samsungWakeGeneration
         working = true
-        actionStatus = if (cecPuck != null) "Väcker ${cecPuck.name} så HDMI-CEC startar Samsung-TV:n…" else "Skickar Wake-on-LAN till Samsung-TV:n…"
+        actionStatus = if (cecPuck != null) "Skickar Cast direkt till ${cecPuck.name}…" else "Skickar Wake-on-LAN till Samsung-TV:n…"
         scope.launch wakeLaunch@{
-            runCatching {
-                val broadcast = NecNetworkDiscovery.activeSubnet(context)?.broadcastAddress()
-                val remembered = devices.firstOrNull() ?: savedSamsungDevice
-                if (cecPuck != null) castCecWakeClient.wake(cecPuck.address, cecPuck.castPort)
-                normalizedMac?.let { WakeOnLan.send(it, broadcast, remembered?.address) }
+            val broadcast = NecNetworkDiscovery.activeSubnet(context)?.broadcastAddress()
+            val remembered = devices.firstOrNull() ?: savedSamsungDevice
+            val castResult = cecPuck?.let { puck ->
+                runCatching { castCecWakeClient.wake(puck.address, puck.castPort) }
+            }
+            normalizedMac?.let { WakeOnLan.send(it, broadcast, remembered?.address) }
 
-                val savedIdentity = identity
-                if (remembered != null && savedIdentity != null) {
-                    withTimeoutOrNull(2_500) {
-                        runCatching {
-                            SamsungRemoteSession(remembered.address, savedIdentity, remembered.deviceId)
-                                .sendKey("KEY_POWERON")
-                        }
+            val savedIdentity = identity
+            if (cecPuck == null && remembered != null && savedIdentity != null) {
+                withTimeoutOrNull(2_500) {
+                    runCatching {
+                        SamsungRemoteSession(remembered.address, savedIdentity, remembered.deviceId)
+                            .sendKey("KEY_POWERON")
                     }
                 }
+            }
 
-                actionStatus = "Väcksignal skickad. Väntar på Samsung-TV:n…"
-                val address = remembered?.address ?: error("Den sparade TV-adressen saknas")
-                val found = withTimeoutOrNull(35_000) {
-                    while (true) {
-                        discovery.discoverAddress(address)?.let { return@withTimeoutOrNull it }
-                        delay(750)
-                    }
-                    @Suppress("UNREACHABLE_CODE")
-                    null
-                }
-                if (found != null) {
-                        devices = listOf(found)
-                        savedSamsungDevice = found
-                        samsungDeviceStore.save(found)
-                        actionStatus = "Samsung-TV:n är vaken och återansluten"
-                        working = false
-                        return@wakeLaunch
-                }
-                error("TV:n svarade inte efter 35 sekunder. Kontrollera HDMI-CEC och att rätt puck är kopplad till Samsung.")
-            }.onFailure { actionStatus = it.message ?: "Kunde inte väcka Samsung-TV:n" }
             working = false
+            actionStatus = when {
+                castResult?.isSuccess == true -> "Cast skickad till ${cecPuck?.name}. HDMI-CEC bör väcka Samsung; du kan fortsätta använda appen."
+                cecPuck != null -> "Cast till ${cecPuck.name} misslyckades: ${castResult?.exceptionOrNull()?.message ?: "okänt fel"}. WoL skickades som reserv."
+                else -> "Wake-on-LAN skickad. Kontrollerar Samsung i bakgrunden."
+            }
+
+            val address = remembered?.address ?: return@wakeLaunch
+            val found = withTimeoutOrNull(25_000) {
+                while (samsungWakeGeneration == wakeGeneration) {
+                    runCatching {
+                        discovery.discoverAddress(address)?.let { return@withTimeoutOrNull it }
+                    }
+                    delay(900)
+                }
+                null
+            }
+            if (found != null && samsungWakeGeneration == wakeGeneration) {
+                devices = listOf(found)
+                savedSamsungDevice = found
+                samsungDeviceStore.save(found)
+                actionStatus = "Samsung-TV:n är vaken och återansluten"
+            }
         }
     }
 
@@ -583,7 +589,7 @@ private fun EutherBeamApp() {
                     SamsungWakeCard(
                         device = displayedSamsung,
                         online = onlineSamsung != null,
-                        cecPuckName = androidTvDevices.firstOrNull { it.linkedDisplay == "samsung" && it.supportsCast }?.name,
+                        cecPuckName = androidTvDevices.firstOrNull { it.linkedDisplay == "samsung" }?.name,
                         macInput = samsungMacInput,
                         onMacChange = { samsungMacInput = it },
                         scanning = scanning,
@@ -899,7 +905,7 @@ private fun SamsungWakeCard(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(
             onClick = onSaveMac,
-            enabled = !working && !scanning,
+            enabled = !working,
             modifier = Modifier.weight(1f).height(52.dp),
             shape = RoundedCornerShape(20.dp),
             border = BorderStroke(1.dp, BeamMint.copy(alpha = 0.5f)),
@@ -907,7 +913,7 @@ private fun SamsungWakeCard(
         ) { Text("Spara MAC", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
         Button(
             onClick = onWake,
-            enabled = !working && !scanning && (cecPuckName != null || WakeOnLan.normalizeMac(macInput) != null),
+            enabled = !working && (cecPuckName != null || WakeOnLan.normalizeMac(macInput) != null),
             modifier = Modifier.weight(1f).height(52.dp),
             shape = RoundedCornerShape(20.dp),
             border = BorderStroke(1.dp, BeamYellow),

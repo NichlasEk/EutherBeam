@@ -64,6 +64,12 @@ online. The Android TV panel also exposes an explicit `VÄCK PUCK VIA CAST` acti
 Power command falls back to Cast when the paired remote channel is unavailable. Sleeping and room
 shutdown still use the authenticated Android TV remote channel.
 
+Alpha 12 makes the Samsung standby button use the associated player even when an older saved device
+record has not yet been refreshed with its Cast capability. The UI is disabled only while the Cast
+packet itself is sent; Samsung availability is then checked in the background for up to 25 seconds.
+The status line names the player and reports whether Cast was accepted or Wake-on-LAN was used as a
+fallback, so wake routing is visible instead of looking like a frozen app.
+
 ## Build
 
 Requirements: JDK 17 and an Android SDK containing API 36.
