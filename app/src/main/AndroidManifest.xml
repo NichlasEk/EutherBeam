@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <uses-permission android:name="se.euther.euthervox.permission.LOGITECH_VOLUME" />
+    <queries><package android:name="se.euther.euthervox" /></queries>
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"

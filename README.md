@@ -95,3 +95,16 @@ The Kotlin implementation was checked byte-for-byte against the MIT-licensed `td
 ## Safety
 
 The normal UI exposes consumer remote keys only. Factory and service-menu keys are intentionally excluded.
+
+## Logitech IR volume — alpha.13
+
+Always-visible **Höj volymen** / **Sänk volymen** buttons use the signed local
+bridge in EutherVox 0.20.0-beta.2 or later. Install both apps from the same
+publisher and connect/login in Vox first. One tap sends one registered command;
+buttons wait for its result. The displayed transmission result does not prove
+that the Logitech receiver was in range or correctly aligned.
+
+Beam receives no IR-node password/token. Android's signature permission protects
+the bridge, and the gateway still checks the authenticated user's permissions.
+No queued reconnect sends or automatic retransmission. If Vox is unavailable,
+the card asks the user to connect or update it. Existing TV controls are unchanged.
