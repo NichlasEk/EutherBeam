@@ -108,3 +108,17 @@ Beam receives no IR-node password/token. Android's signature permission protects
 the bridge, and the gateway still checks the authenticated user's permissions.
 No queued reconnect sends or automatic retransmission. If Vox is unavailable,
 the card asks the user to connect or update it. Existing TV controls are unchanged.
+
+## Fast volume update — Vox beta.3 / Beam alpha.14
+
+This supersedes the earlier acknowledgement-waiting button workflow. Logitech
+buttons dispatch immediately, with 160 ms tap debouncing and no success receipt,
+waiting state or automatic resend. Beam uses an unordered signature-protected
+broadcast; Vox's already-authenticated WebSocket sends the registered operation.
+The gateway sends one HMAC-authenticated, short-lived UDP packet over LAN. It
+keeps a durable duplicate ledger and refreshes the node's epoch/clock outside the
+button path. Logitech voice aliases also dispatch silently. Local transport
+errors may still be reported; silence is not proof of physical device response.
+Update both apps and node firmware together. The corrected firmware includes one
+observed NEC repetition frame; the previous claim that volume changes were
+confirmed has been withdrawn by the user. At-TV verification is pending.
