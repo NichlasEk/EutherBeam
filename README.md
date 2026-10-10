@@ -122,3 +122,17 @@ errors may still be reported; silence is not proof of physical device response.
 Update both apps and node firmware together. The corrected firmware includes one
 observed NEC repetition frame; the previous claim that volume changes were
 confirmed has been withdrawn by the user. At-TV verification is pending.
+
+## 0.1.0-alpha.15 — TV-specific Logitech buttons
+
+Two cards, NEC · Bottenvåningen and Samsung · Övervåningen, each expose volume up
+and down. Each button sends an explicit registered target through the signature-
+protected Vox bridge with 160 ms per-target debounce, no success acknowledgement
+or retry. Update Vox to 0.20.0-beta.4: the new broadcast action is rejected by old
+Vox versions rather than accidentally controlling the default room. The button
+colors use Beam's existing dark/mint Material theme. Embedded Beam in Vox follows
+Vox's current theme (including System Regis).
+
+Build, lint and unit tests pass. All four emulator buttons were observed delivering
+the correct target and direction once to two mock nodes. Physical output from the
+new ESP8266 transmitter still requires the user's trial.

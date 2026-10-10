@@ -517,7 +517,12 @@ private fun EutherBeamApp() {
         }
     }
 
-    MaterialTheme {
+    MaterialTheme(colorScheme = androidx.compose.material3.darkColorScheme(
+        primary=BeamMint, onPrimary=BeamDark, secondary=BeamOrange, onSecondary=BeamDark,
+        tertiary=BeamYellow, onTertiary=BeamDark, background=BeamDark, onBackground=BeamText,
+        surface=BeamPanel, onSurface=BeamText, surfaceContainer=BeamPanel,
+        surfaceContainerHigh=BeamRaised, onSurfaceVariant=BeamMuted,
+    )) {
         Surface(color = BeamDark, modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
