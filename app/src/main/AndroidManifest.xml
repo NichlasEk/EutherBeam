@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="se.euther.eutherbeam.permission.CONTROL" android:protectionLevel="signature" />
+    <uses-permission android:name="se.euther.eutherbeam.permission.CONTROL" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -15,6 +17,7 @@
         android:roundIcon="@drawable/ic_launcher"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.EutherBeam">
+        <provider android:name=".BeamControlProvider" android:authorities="se.euther.eutherbeam.control" android:exported="true" android:permission="se.euther.eutherbeam.permission.CONTROL" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

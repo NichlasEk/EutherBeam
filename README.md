@@ -172,3 +172,15 @@ remain to be verified on paired devices.
 APK: build/releases/EutherBeam-0.1.0-alpha16-debug.apk (versionCode 16).
 SHA-256: a9a4597cc49e7fe00c82db0a268924d982de56d0b9bdec14596000f461666685.
 This package is local and has not been published to EutherOxide Apps.
+
+### Alpha 17 — share the existing remote with Vox
+
+Vox beta 7 can use this app's saved devices, room bindings and pairings through a
+signature-protected local provider. Pairing keys remain in Beam's Keystore. Update
+both apps; Vox's room cards show when they use Beam. `Väck puck` prefers the paired
+Android Remote WAKEUP command, with Cast fallback; `Vila puck` sends SLEEP.
+A sent wake command does not prove that a network-off device can wake.
+
+Build, JVM tests and lint passed. A two-app emulator test verified Vox control
+and room buttons using only Beam's saved simulated puck, plus denial of shell
+provider access. Physical standby wake remains to be checked on the real puck.
