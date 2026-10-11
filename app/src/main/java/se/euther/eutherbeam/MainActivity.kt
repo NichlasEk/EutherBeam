@@ -142,8 +142,7 @@ private fun EutherBeamApp() {
     var androidTvStatus by remember { mutableStateOf<String?>(null) }
     var linkedDisplay by remember {
         mutableStateOf(
-            if (initiallySelectedAndroidTv?.linkedDisplay == "samsung") LinkedDisplay.SAMSUNG
-            else LinkedDisplay.NEC,
+            LinkedDisplay.fromId(initiallySelectedAndroidTv?.linkedDisplay),
         )
     }
     val identityStore = remember { SamsungIdentityStore(context) }
@@ -151,6 +150,17 @@ private fun EutherBeamApp() {
         preferences.getString("client_id", null) ?: UUID.randomUUID().toString().also {
             preferences.edit().putString("client_id", it).apply()
         }
+    }
+
+    DisposableEffect(preferences) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "android_tv_devices_v1") {
+                androidTvDevices = androidTvDeviceStore.load()
+                linkedDisplay = LinkedDisplay.fromId(androidTvDevices.firstOrNull { it.id == selectedAndroidTvId }?.linkedDisplay)
+            }
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }
 
     DisposableEffect(Unit) {
@@ -361,7 +371,7 @@ private fun EutherBeamApp() {
                     androidTvAddressInput = found.address
                     androidTvName = found.name
                     androidTvPairedHost = found.takeIf { it.paired }?.address.orEmpty()
-                    linkedDisplay = if (found.linkedDisplay == "samsung") LinkedDisplay.SAMSUNG else LinkedDisplay.NEC
+                    linkedDisplay = LinkedDisplay.fromId(found.linkedDisplay)
                     androidTvDeviceStore.save(androidTvDevices, found.id)
                     androidTvStatus = "${foundDevices.size} puck${if (foundDevices.size == 1) "" else "ar"} hittade. ${found.name} är vald."
                 }
@@ -462,6 +472,10 @@ private fun EutherBeamApp() {
             androidTvStatus = "Välj en sparad Android TV-puck först"
             return@roomPower
         }
+        if (linkedDisplay == LinkedDisplay.NONE) {
+            androidTvStatus = "Koppla pucken till Uppe eller Nere först"
+            return@roomPower
+        }
         if (androidTvPairedHost != host && !on) {
             androidTvStatus = "Para Android TV-pucken först"
             return@roomPower
@@ -473,6 +487,7 @@ private fun EutherBeamApp() {
                 if (on) {
                     var castWakeSucceeded = false
                     when (linkedDisplay) {
+                        LinkedDisplay.NONE -> error("Koppla pucken till Uppe eller Nere först")
                         LinkedDisplay.NEC -> {
                             val displayHost = Ipv4Subnet.normalizeAddress(necAddress)
                                 ?: error("Hitta eller spara NEC-skärmen först")
@@ -498,6 +513,7 @@ private fun EutherBeamApp() {
                     androidTvRemoteClient.sendKey(host, AndroidTvKey.SLEEP)
                     delay(350)
                     when (linkedDisplay) {
+                        LinkedDisplay.NONE -> error("Koppla pucken till Uppe eller Nere först")
                         LinkedDisplay.NEC -> {
                             val displayHost = Ipv4Subnet.normalizeAddress(necAddress)
                                 ?: error("Hitta eller spara NEC-skärmen först")
@@ -538,7 +554,7 @@ private fun EutherBeamApp() {
                 Text("Dina skärmar. Ett tryck bort.", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 30.sp)
                 Text("Lokal signal. Krypterad länk. Ingen molntjänst.", color = BeamMuted, fontSize = 15.sp)
 
-                LogitechVolumeCard()
+                RoomRemoteCards()
                 RemoteTabs(
                     selected = selectedTab,
                     onSelect = { tab ->
@@ -637,7 +653,7 @@ private fun EutherBeamApp() {
                                 androidTvAddressInput = selected.address
                                 androidTvName = selected.name
                                 androidTvPairedHost = selected.takeIf { it.paired }?.address.orEmpty()
-                                linkedDisplay = if (selected.linkedDisplay == "samsung") LinkedDisplay.SAMSUNG else LinkedDisplay.NEC
+                                linkedDisplay = LinkedDisplay.fromId(selected.linkedDisplay)
                                 androidTvRemoteClient.disconnect()
                                 androidTvDeviceStore.save(androidTvDevices, selected.id)
                                 androidTvStatus = "${selected.name} vald"
@@ -649,17 +665,15 @@ private fun EutherBeamApp() {
                             paired = androidTvAddress.isNotBlank() && androidTvPairedHost == androidTvAddress,
                             linkedDisplay = linkedDisplay,
                             onLinkedDisplayChange = { display ->
-                                linkedDisplay = display
-                                androidTvDevices = androidTvDevices.map {
-                                    when {
-                                        it.id == selectedAndroidTvId -> it.copy(linkedDisplay = display.name.lowercase())
-                                        it.linkedDisplay == display.name.lowercase() -> it.copy(
-                                            linkedDisplay = if (display == LinkedDisplay.SAMSUNG) "nec" else "samsung",
-                                        )
-                                        else -> it
-                                    }
-                                }
-                                androidTvDeviceStore.save(androidTvDevices, selectedAndroidTvId)
+                                runCatching {
+                                    if (display == LinkedDisplay.NONE) androidTvDeviceStore.load().map {
+                                        if (it.id == selectedAndroidTvId) it.copy(linkedDisplay = "") else it
+                                    } else se.euther.eutherbeam.androidtv.bindPlayer(androidTvDeviceStore.load(), display.name.lowercase(), selectedAndroidTvId ?: error("Välj en puck först"))
+                                }.onSuccess {
+                                    linkedDisplay = display
+                                    androidTvDevices = it
+                                    androidTvDeviceStore.save(it, selectedAndroidTvId)
+                                }.onFailure { androidTvStatus = it.message }
                             },
                             working = androidTvWorking,
                             status = androidTvStatus,

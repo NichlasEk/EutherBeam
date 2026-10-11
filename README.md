@@ -145,3 +145,30 @@ This verifies actual Logitech volume control through the new ESP8266 transmitter
 which was temporarily positioned downstairs. It supersedes the pending physical
 trial notes above. Testing at its final upstairs mounting position remains to be
 done after the user hangs the nodes in place.
+
+## Alpha 16: TV combinations
+
+Uppe and Nere each combine one display (Samsung/NEC), an explicitly selected
+Android TV player and ordinary minus/plus volume buttons below the remote.
+Volume continues through the existing signature-protected EutherVox bridge to
+that floor's registered transmitter; hardware details are hidden from the card.
+Each card shows the player name/pairing state. Välj puck cannot silently take a
+player from the other TV card. New players are unassigned; the setup screen and
+cards share saved bindings. Other household devices are not reclassified.
+
+Vad visas? reads Cast status and, when needed, the Android Remote app identifier.
+A title is shown only when supplied by Cast. Missing title/status remains unknown.
+The shared protocol also supports Vox beta 6's bounded voice-search requests;
+normal key connections retain the previous protocol feature set. Play and Pause
+send separate keys. Setup/parning remains below the TV cards.
+
+Validation: build/lint pass; 28 JVM tests pass and 5 opt-in hardware tests are
+skipped. All four volume buttons were tapped in the emulator and reached a mock
+Vox gateway through the signed receiver with the correct floor/direction, once
+each. Android TV search/Cast reading was exercised through the shared code using
+a local TLS simulator. Physical TV response and streaming-app metadata availability
+remain to be verified on paired devices.
+
+APK: build/releases/EutherBeam-0.1.0-alpha16-debug.apk (versionCode 16).
+SHA-256: a9a4597cc49e7fe00c82db0a268924d982de56d0b9bdec14596000f461666685.
+This package is local and has not been published to EutherOxide Apps.
